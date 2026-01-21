@@ -13,7 +13,7 @@
 
 Most vector databases are designed for massive cloud clusters. ZappyBase is designed for **efficiency**.
 
-*   **Ultra-Low Footprint**: While production databases like **Qdrant** or **Milvus** often require 500MB+ just to idle, ZappyBase can index **100k vectors using only ~17MB of overhead**.
+*   **Ultra-Low Footprint**: While production databases like **Qdrant** or **Milvus** often require 500MB+ just to idle, ZappyBase can index **100k vectors using only ~39MB of RAM** (with SQ8).
 *   **Edge Ready**: Optimized specifically for Apple Silicon (NEON) and modern x86_64 (AVX-512).
 *   **Zero Dependencies**: Written in pure Rust. No Python runtime, no Docker containers required.
 
@@ -23,13 +23,21 @@ Most vector databases are designed for massive cloud clusters. ZappyBase is desi
 
 We validate every build for **Recall** (accuracy) and **Latency**.
 
+### **Standard Workload (2k vectors, 128 dim)**
 | Mode | Recall @ 10 | Latency (Avg) | Compression |
 | :--- | :--- | :--- | :--- |
-| **HNSW (In-Memory)** | **98.7%** | **0.15 ms** | 1x |
-| **SQ8 (Quantized)** | **99.5%** | **0.15 ms** | **3.76x** |
-| **Binary (1-bit)** | 30.0% | 0.22 ms | 32.0x |
+| **HNSW (In-Memory)** | **98.7%** | **0.21 ms** | 1x |
+| **SQ8 (Quantized)** | **99.5%** | **0.78 ms** | **3.76x** |
+| **Binary (1-bit)** | 30.0% | 1.13 ms | 32.0x |
 
-*Performance measured on M2 Mac with 2,000 vectors (128-dim). Recent optimizations reduced HNSW latency by ~32%.*
+### **Scaling Benchmarks (384 dim)**
+| Dataset Size | Mode | Latency (Avg) | Throughput | Memory Usage |
+| :--- | :--- | :--- | :--- | :--- |
+| **50,000 Vectors** | **HNSW** | **0.80 ms** | 1,254 QPS | ~87 MB |
+| **50,000 Vectors** | **SQ8** | 9.55 ms | 105 QPS | **~20 MB** |
+| **100,000 Vectors** | **SQ8** | 18.93 ms | 53 QPS | **~39 MB** |
+
+*Performance measured on M2 Mac. HNSW provides sub-millisecond search at scale, while SQ8 offers massive memory savings.*
 
 ---
 
