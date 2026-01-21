@@ -1,11 +1,37 @@
-use crate::{Config, Error, Result, VectorDb};
+use crate::types::VectorId;
+use crate::{
+    Config, Error, QuantizationType, QuantizedConfig, QuantizedVectorDb, Result, VectorDb,
+};
 use parking_lot::RwLock;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Enum representing either a standard or quantized collection
+pub enum Collection {
+    Standard(Arc<RwLock<VectorDb>>),
+    Quantized(Arc<RwLock<QuantizedVectorDb>>),
+}
+
+impl Collection {
+    pub fn insert(&self, id: String, vector: &[f32], metadata: Option<Value>) -> Result<()> {
+        match self {
+            Collection::Standard(db) => db.write().insert(id, vector, metadata),
+            Collection::Quantized(db) => db.write().insert(id, vector, metadata),
+        }
+    }
+
+    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
+        match self {
+            Collection::Standard(db) => db.read().search(query, k),
+            Collection::Quantized(db) => db.read().search(query, k),
+        }
+    }
+}
+
 /// Database manages multiple vector collections
 pub struct Database {
-    collections: RwLock<HashMap<String, Arc<RwLock<VectorDb>>>>,
+    collections: RwLock<HashMap<String, Collection>>,
 }
 
 impl Default for Database {
@@ -28,8 +54,29 @@ impl Database {
         if collections.contains_key(name) {
             return Err(Error::DuplicateCollection(name.to_string()));
         }
-        let db = VectorDb::new(config)?;
-        collections.insert(name.to_string(), Arc::new(RwLock::new(db)));
+
+        let collection = if config.quantization == QuantizationType::None {
+            let db = VectorDb::new(config)?;
+            Collection::Standard(Arc::new(RwLock::new(db)))
+        } else {
+            // Convert Config to QuantizedConfig
+            // Note: Config has `max_vectors` which QuantizedConfig doesn't,
+            // and QuantizedConfig has `keep_originals` and `rerank_multiplier` which Config doesn't.
+            // We'll use defaults for now or could extend Config.
+            // For now assuming keep_originals=false and default rerank
+            let q_config = QuantizedConfig {
+                dimensions: config.dimensions,
+                distance_metric: config.distance_metric,
+                hnsw: config.hnsw,
+                quantization: config.quantization,
+                keep_originals: false, // Default behavior
+                rerank_multiplier: 3,
+            };
+            let db = QuantizedVectorDb::new(q_config)?;
+            Collection::Quantized(Arc::new(RwLock::new(db)))
+        };
+
+        collections.insert(name.to_string(), collection);
         Ok(())
     }
 
@@ -43,7 +90,11 @@ impl Database {
     }
 
     /// Get a collection by name
-    pub fn get_collection(&self, name: &str) -> Result<Arc<RwLock<VectorDb>>> {
+    /// Returns a reference-counted handle to the collection wrapper
+    // Note: We can't return Arc<RwLock<VectorDb>> anymore because it might be Quantized.
+    // We'll return a clone of the Collection enum which holds the Arcs.
+    // However, Collection itself isn't Clone currently. Let's make it Clone.
+    pub fn get_collection(&self, name: &str) -> Result<Collection> {
         let collections = self.collections.read();
         collections
             .get(name)
@@ -54,5 +105,15 @@ impl Database {
     /// List all collection names
     pub fn list_collections(&self) -> Vec<String> {
         self.collections.read().keys().cloned().collect()
+    }
+}
+
+// Make Collection cloneable (cheap, just cloning Arcs)
+impl Clone for Collection {
+    fn clone(&self) -> Self {
+        match self {
+            Collection::Standard(db) => Collection::Standard(db.clone()),
+            Collection::Quantized(db) => Collection::Quantized(db.clone()),
+        }
     }
 }

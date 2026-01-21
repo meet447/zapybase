@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use zapybase_core::{Config, Database, DistanceMetric};
+use zapybase_core::{Config, Database, DistanceMetric, QuantizationType};
 
 #[derive(Clone)]
 struct AppState {
@@ -21,6 +21,8 @@ struct CreateCollectionRequest {
     dimensions: usize,
     #[serde(default)]
     distance_metric: DistanceMetric,
+    #[serde(default)]
+    quantization: Option<QuantizationType>,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +83,7 @@ async fn create_collection(
     let config = Config {
         dimensions: payload.dimensions,
         distance_metric: payload.distance_metric,
+        quantization: payload.quantization.unwrap_or(QuantizationType::None),
         ..Config::default()
     };
 
@@ -110,8 +113,7 @@ async fn insert_vector(
     })?;
 
     let result = tokio::task::spawn_blocking(move || {
-        let mut db = collection.write();
-        db.insert(payload.id, &payload.vector, payload.metadata)
+        collection.insert(payload.id, &payload.vector, payload.metadata)
     }).await.map_err(|e| (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse { error: e.to_string() }),
@@ -139,8 +141,7 @@ async fn search_vector(
     })?;
 
     let result = tokio::task::spawn_blocking(move || {
-        let db = collection.read();
-        db.search(&payload.vector, payload.k)
+        collection.search(&payload.vector, payload.k)
     }).await.map_err(|e| (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse { error: e.to_string() }),

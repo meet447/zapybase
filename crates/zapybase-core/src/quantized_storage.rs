@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::quantization::{BinaryQuantizer, QuantizationType, SQ8Metadata, SQ8Quantizer};
 use crate::types::{InternalId, VectorId};
 use parking_lot::RwLock;
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Quantized vector storage with configurable compression
@@ -44,6 +45,9 @@ pub struct QuantizedStorage {
 
     /// Map from internal ID to external ID
     internal_to_id: RwLock<Vec<VectorId>>,
+
+    /// Optional metadata for each vector
+    metadata: RwLock<HashMap<InternalId, Value>>,
 }
 
 impl QuantizedStorage {
@@ -79,11 +83,17 @@ impl QuantizedStorage {
             keep_originals,
             id_to_internal: RwLock::new(HashMap::new()),
             internal_to_id: RwLock::new(Vec::new()),
+            metadata: RwLock::new(HashMap::new()),
         }
     }
 
     /// Insert a vector and return its internal ID
-    pub fn insert(&self, id: VectorId, vector: &[f32]) -> Result<InternalId> {
+    pub fn insert(
+        &self,
+        id: VectorId,
+        vector: &[f32],
+        metadata: Option<Value>,
+    ) -> Result<InternalId> {
         if vector.len() != self.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.dimensions,
@@ -110,13 +120,13 @@ impl QuantizedStorage {
             }
             QuantizationType::SQ8 => {
                 let quantizer = self.sq8_quantizer.as_ref().unwrap();
-                let (quantized, metadata) = quantizer.quantize(vector);
+                let (quantized, sq8_meta) = quantizer.quantize(vector);
 
                 let mut sq8_vectors = self.sq8_vectors.write();
                 let mut sq8_metadata = self.sq8_metadata.write();
 
                 sq8_vectors.extend_from_slice(&quantized);
-                sq8_metadata.push(metadata);
+                sq8_metadata.push(sq8_meta);
             }
             QuantizationType::Binary => {
                 let quantizer = self.binary_quantizer.as_ref().unwrap();
@@ -138,6 +148,11 @@ impl QuantizedStorage {
         // Update mappings
         id_to_internal.insert(id.clone(), internal_id);
         internal_to_id.push(id);
+
+        // Store metadata if present
+        if let Some(meta) = metadata {
+            self.metadata.write().insert(internal_id, meta);
+        }
 
         Ok(internal_id)
     }
@@ -216,6 +231,11 @@ impl QuantizedStorage {
             }
         }
         None
+    }
+
+    /// Get metadata for a vector
+    pub fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
+        self.metadata.read().get(&internal_id).cloned()
     }
 
     /// Get external ID from internal ID
@@ -300,7 +320,7 @@ mod tests {
         let id = VectorId::from("test");
         let vector = vec![1.0, 0.0, 0.0, 0.0];
 
-        let internal_id = storage.insert(id, &vector).unwrap();
+        let internal_id = storage.insert(id, &vector, None).unwrap();
 
         let dist = storage
             .distance(&vector, internal_id, DistanceMetric::Cosine)
@@ -317,8 +337,8 @@ mod tests {
         let v1 = vec![1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0];
         let v2 = vec![1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
 
-        let id1 = storage.insert("v1".into(), &v1).unwrap();
-        let id2 = storage.insert("v2".into(), &v2).unwrap();
+        let id1 = storage.insert("v1".into(), &v1, None).unwrap();
+        let id2 = storage.insert("v2".into(), &v2, None).unwrap();
 
         let dist1 = storage.distance(&v1, id1, DistanceMetric::Cosine).unwrap();
         let dist2 = storage.distance(&v1, id2, DistanceMetric::Cosine).unwrap();
@@ -334,7 +354,7 @@ mod tests {
         let storage = QuantizedStorage::new(4, QuantizationType::SQ8, true);
 
         let vector = vec![1.0, 2.0, 3.0, 4.0];
-        let internal_id = storage.insert("test".into(), &vector).unwrap();
+        let internal_id = storage.insert("test".into(), &vector, None).unwrap();
 
         let original = storage.get_original(internal_id).unwrap();
         assert_eq!(original, vector);
@@ -347,7 +367,9 @@ mod tests {
         // Insert 100 vectors
         for i in 0..100 {
             let vector: Vec<f32> = (0..384).map(|j| (i * j) as f32 / 1000.0).collect();
-            storage.insert(format!("v{}", i).into(), &vector).unwrap();
+            storage
+                .insert(format!("v{}", i).into(), &vector, None)
+                .unwrap();
         }
 
         let ratio = storage.compression_ratio();

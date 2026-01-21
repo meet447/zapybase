@@ -88,6 +88,8 @@ pub struct Config {
     pub hnsw: HnswConfig,
     /// Maximum number of vectors (0 = unlimited)
     pub max_vectors: usize,
+    /// Quantization type (None by default)
+    pub quantization: QuantizationType,
 }
 
 impl Default for Config {
@@ -97,6 +99,7 @@ impl Default for Config {
             distance_metric: DistanceMetric::Cosine,
             hnsw: HnswConfig::default(),
             max_vectors: 0,
+            quantization: QuantizationType::None,
         }
     }
 }
@@ -237,8 +240,13 @@ impl QuantizedVectorDb {
         Ok(Self { config, storage })
     }
 
-    /// Insert a vector with the given ID
-    pub fn insert(&mut self, id: impl Into<VectorId>, vector: &[f32]) -> Result<()> {
+    /// Insert a vector with the given ID and optional metadata
+    pub fn insert(
+        &mut self,
+        id: impl Into<VectorId>,
+        vector: &[f32],
+        metadata: Option<Value>,
+    ) -> Result<()> {
         let id = id.into();
 
         if vector.len() != self.config.dimensions {
@@ -248,7 +256,7 @@ impl QuantizedVectorDb {
             });
         }
 
-        self.storage.insert(id, vector)?;
+        self.storage.insert(id, vector, metadata)?;
         Ok(())
     }
 
@@ -256,7 +264,7 @@ impl QuantizedVectorDb {
     ///
     /// For large datasets, this should be combined with HNSW indexing.
     /// This implementation is optimized for small-medium datasets (< 100K vectors).
-    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32)>> {
+    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -308,13 +316,14 @@ impl QuantizedVectorDb {
                 candidates.into_iter().take(k).collect()
             };
 
-        // Map to external IDs
-        let mapped: Vec<(VectorId, f32)> = results
+        // Map to external IDs and fetch metadata
+        let mapped: Vec<(VectorId, f32, Option<Value>)> = results
             .into_iter()
             .filter_map(|(internal_id, distance)| {
-                self.storage
-                    .get_external_id(internal_id)
-                    .map(|ext_id| (ext_id, distance))
+                self.storage.get_external_id(internal_id).map(|ext_id| {
+                    let metadata = self.storage.get_metadata(internal_id);
+                    (ext_id, distance, metadata)
+                })
             })
             .collect();
 
@@ -397,9 +406,9 @@ mod tests {
 
         let mut db = QuantizedVectorDb::new(config).unwrap();
 
-        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
-        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0]).unwrap();
+        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0], None).unwrap();
 
         let results = db.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
 
@@ -422,11 +431,11 @@ mod tests {
 
         let mut db = QuantizedVectorDb::new(config).unwrap();
 
-        db.insert("vec1", &[1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0])
+        db.insert("vec1", &[1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0], None)
             .unwrap();
-        db.insert("vec2", &[-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0])
+        db.insert("vec2", &[-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0], None)
             .unwrap();
-        db.insert("vec3", &[1.0, 1.0, 1.0, 0.5, -1.0, -1.0, -1.0, -0.5])
+        db.insert("vec3", &[1.0, 1.0, 1.0, 0.5, -1.0, -1.0, -1.0, -0.5], None)
             .unwrap();
 
         let results = db
@@ -450,9 +459,9 @@ mod tests {
 
         let mut db = QuantizedVectorDb::new(config).unwrap();
 
-        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
-        db.insert("vec3", &[0.95, 0.05, 0.0, 0.0]).unwrap();
+        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec3", &[0.95, 0.05, 0.0, 0.0], None).unwrap();
 
         let results = db.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
 
@@ -475,7 +484,7 @@ mod tests {
         // Insert 100 vectors
         for i in 0..100 {
             let vector: Vec<f32> = (0..384).map(|j| ((i * j) as f32).sin()).collect();
-            db.insert(format!("v{}", i), &vector).unwrap();
+            db.insert(format!("v{}", i), &vector, None).unwrap();
         }
 
         let ratio = db.compression_ratio();
