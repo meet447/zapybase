@@ -2,6 +2,7 @@
 //!
 //! Provides efficient storage and retrieval of vectors with ID mapping.
 
+use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
 use crate::types::{InternalId, VectorId};
 use parking_lot::RwLock;
@@ -11,7 +12,17 @@ use std::collections::HashMap;
 /// Trait for vector storage backends
 pub trait VectorStorageTrait {
     /// Get vector data for distance calculations
+    /// Note: This copies the vector data, which is slow for repeated use.
     fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>>;
+
+    /// Calculate distance between a stored vector and a query vector
+    /// This is optimized to avoid allocation.
+    fn distance(
+        &self,
+        internal_id: InternalId,
+        query: &[f32],
+        metric: DistanceMetric,
+    ) -> Option<f32>;
 }
 
 /// In-memory vector storage with ID mapping
@@ -147,6 +158,24 @@ impl VectorStorage {
 impl VectorStorageTrait for VectorStorage {
     fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>> {
         self.get(internal_id)
+    }
+
+    fn distance(
+        &self,
+        internal_id: InternalId,
+        query: &[f32],
+        metric: DistanceMetric,
+    ) -> Option<f32> {
+        let vectors = self.vectors.read();
+        let start = internal_id.as_usize() * self.dimensions;
+        let end = start + self.dimensions;
+
+        if end <= vectors.len() {
+            let vector_slice = &vectors[start..end];
+            Some(metric.distance(query, vector_slice))
+        } else {
+            None
+        }
     }
 }
 

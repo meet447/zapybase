@@ -273,15 +273,16 @@ impl HnswIndex {
 
                     if neighbor_node.neighbors[layer].len() > max_connections {
                         // Get distances and prune
-                        let neighbor_vec = storage.get_vector_data(neighbor.id);
-                        if let Some(nv) = neighbor_vec {
+                        if let Some(nv) = storage.get_vector_data(neighbor.id) {
                             let mut candidates: Vec<Candidate> = neighbor_node.neighbors[layer]
                                 .iter()
                                 .filter_map(|&n_id| {
-                                    storage.get_vector_data(n_id).map(|vec| Candidate {
-                                        id: n_id,
-                                        distance: self.distance_metric.distance(&nv, &vec),
-                                    })
+                                    storage
+                                        .distance(n_id, &nv, self.distance_metric)
+                                        .map(|dist| Candidate {
+                                            id: n_id,
+                                            distance: dist,
+                                        })
                                 })
                                 .collect();
                             candidates.sort_by(|a, b| {
@@ -324,8 +325,7 @@ impl HnswIndex {
     ) -> Result<InternalId> {
         let mut current = entry;
         let mut current_dist = storage
-            .get_vector_data(entry)
-            .map(|v| self.distance_metric.distance(query, &v))
+            .distance(entry, query, self.distance_metric)
             .unwrap_or(f32::MAX);
 
         loop {
@@ -334,8 +334,7 @@ impl HnswIndex {
 
             if node.max_layer >= layer {
                 for &neighbor_id in &node.neighbors[layer] {
-                    if let Some(neighbor_vec) = storage.get_vector_data(neighbor_id) {
-                        let dist = self.distance_metric.distance(query, &neighbor_vec);
+                    if let Some(dist) = storage.distance(neighbor_id, query, self.distance_metric) {
                         if dist < current_dist {
                             current = neighbor_id;
                             current_dist = dist;
@@ -368,8 +367,7 @@ impl HnswIndex {
         let mut results = BinaryHeap::new(); // max-heap
 
         let entry_dist = storage
-            .get_vector_data(entry)
-            .map(|v| self.distance_metric.distance(query, &v))
+            .distance(entry, query, self.distance_metric)
             .unwrap_or(f32::MAX);
 
         visited.insert(entry);
@@ -394,8 +392,9 @@ impl HnswIndex {
             if node.max_layer >= layer {
                 for &neighbor_id in &node.neighbors[layer] {
                     if visited.insert(neighbor_id) {
-                        if let Some(neighbor_vec) = storage.get_vector_data(neighbor_id) {
-                            let dist = self.distance_metric.distance(query, &neighbor_vec);
+                        if let Some(dist) =
+                            storage.distance(neighbor_id, query, self.distance_metric)
+                        {
                             let furthest = results.peek().map(|c| c.distance).unwrap_or(f32::MAX);
 
                             if dist < furthest || results.len() < ef {

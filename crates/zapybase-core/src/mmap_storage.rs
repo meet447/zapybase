@@ -10,6 +10,7 @@
 //! - ID mappings stored in a separate index file
 //! - Append-only for simplicity and crash safety
 
+use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
 use crate::types::{InternalId, VectorId};
 use parking_lot::RwLock;
@@ -413,6 +414,52 @@ impl MmapStorage {
 impl crate::storage::VectorStorageTrait for MmapStorage {
     fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>> {
         self.get(internal_id)
+    }
+
+    fn distance(
+        &self,
+        internal_id: InternalId,
+        query: &[f32],
+        metric: DistanceMetric,
+    ) -> Option<f32> {
+        let mmap = self.mmap.read();
+        let mmap = mmap.as_ref()?;
+
+        let bytes = mmap.as_slice();
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let vector_size = self.dimensions * 4; // f32 = 4 bytes
+        let offset = HEADER_SIZE + internal_id.as_usize() * vector_size;
+        let end = offset + vector_size;
+
+        if end > bytes.len() {
+            return None;
+        }
+
+        let vector_bytes = &bytes[offset..end];
+
+        // This is safe because f32 alignment is usually 4, and mmap gives aligned pages.
+        // However, to be strictly safe and avoid unaligned access on some archs,
+        // we might need `align_to`, but for performance we assume alignment or handle it.
+        // For now, we will perform a safe cast if aligned, or fallback to copy if not?
+        // Actually, SIMD functions in distance.rs usually handle unaligned loads (vld1q_f32 on NEON handles unaligned).
+        // But we need a &[f32] slice. casting &[u8] to &[f32] is unsafe if not aligned.
+
+        let (prefix, vector_slice, suffix) = unsafe { vector_bytes.align_to::<f32>() };
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            // Unaligned access fallback (should be rare with mmap)
+            // Or if the file offset isn't aligned (HEADER_SIZE=16 is aligned to 4/8/16)
+            let vector: Vec<f32> = vector_bytes
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+            Some(metric.distance(query, &vector))
+        } else {
+            Some(metric.distance(query, vector_slice))
+        }
     }
 }
 

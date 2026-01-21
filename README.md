@@ -13,9 +13,11 @@ We validate every build for **Recall** (accuracy) and **Latency**.
 
 | Mode | Recall @ 10 | Latency (Avg) | Compression |
 | :--- | :--- | :--- | :--- |
-| **HNSW (In-Memory)** | **98.5%** | 0.22 ms | 1x |
-| **SQ8 (Quantized)** | **98.9%** | **0.16 ms** | **3.76x** |
-| **Binary (1-bit)** | 25.8% | 0.23 ms | 32.0x |
+| **HNSW (In-Memory)** | **98.7%** | **0.15 ms** | 1x |
+| **SQ8 (Quantized)** | **99.5%** | **0.15 ms** | **3.76x** |
+| **Binary (1-bit)** | 30.0% | 0.22 ms | 32.0x |
+
+*Performance measured on M2 Mac with 2,000 vectors (128-dim). Recent optimizations reduced HNSW latency by ~32% (0.22ms → 0.15ms).*
 
 ---
 
