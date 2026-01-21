@@ -5,6 +5,7 @@
 use crate::error::{Error, Result};
 use crate::types::{InternalId, VectorId};
 use parking_lot::RwLock;
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Trait for vector storage backends
@@ -26,6 +27,9 @@ pub struct VectorStorage {
 
     /// Map from internal ID to external ID
     internal_to_id: RwLock<Vec<VectorId>>,
+
+    /// Optional metadata for each vector
+    metadata: RwLock<HashMap<InternalId, Value>>,
 }
 
 impl VectorStorage {
@@ -36,11 +40,17 @@ impl VectorStorage {
             vectors: RwLock::new(Vec::new()),
             id_to_internal: RwLock::new(HashMap::new()),
             internal_to_id: RwLock::new(Vec::new()),
+            metadata: RwLock::new(HashMap::new()),
         }
     }
 
     /// Insert a vector and return its internal ID
-    pub fn insert(&self, id: VectorId, vector: &[f32]) -> Result<InternalId> {
+    pub fn insert(
+        &self,
+        id: VectorId,
+        vector: &[f32],
+        metadata: Option<Value>,
+    ) -> Result<InternalId> {
         if vector.len() != self.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.dimensions,
@@ -55,6 +65,7 @@ impl VectorStorage {
 
         let mut vectors = self.vectors.write();
         let mut internal_to_id = self.internal_to_id.write();
+        let mut metadata_store = self.metadata.write();
 
         let internal_id = InternalId::from(internal_to_id.len());
 
@@ -64,6 +75,11 @@ impl VectorStorage {
         // Update mappings
         id_to_internal.insert(id.clone(), internal_id);
         internal_to_id.push(id);
+
+        // Store metadata if present
+        if let Some(meta) = metadata {
+            metadata_store.insert(internal_id, meta);
+        }
 
         Ok(internal_id)
     }
@@ -87,6 +103,11 @@ impl VectorStorage {
     #[inline]
     pub fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>> {
         self.get(internal_id)
+    }
+
+    /// Get metadata for a vector
+    pub fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
+        self.metadata.read().get(&internal_id).cloned()
     }
 
     /// Get internal ID from external ID
@@ -140,7 +161,7 @@ mod tests {
         let id = VectorId::from("test");
         let vector = vec![1.0, 2.0, 3.0, 4.0];
 
-        let internal_id = storage.insert(id.clone(), &vector).unwrap();
+        let internal_id = storage.insert(id.clone(), &vector, None).unwrap();
 
         let retrieved = storage.get(internal_id).unwrap();
         assert_eq!(retrieved, vector);
@@ -153,9 +174,9 @@ mod tests {
         let id = VectorId::from("test");
         let vector = vec![1.0, 2.0, 3.0, 4.0];
 
-        storage.insert(id.clone(), &vector).unwrap();
+        storage.insert(id.clone(), &vector, None).unwrap();
 
-        let result = storage.insert(id, &vector);
+        let result = storage.insert(id, &vector, None);
         assert!(matches!(result, Err(Error::DuplicateId(_))));
     }
 
@@ -166,7 +187,7 @@ mod tests {
         let id = VectorId::from("test");
         let vector = vec![1.0, 2.0, 3.0]; // Only 3 dimensions
 
-        let result = storage.insert(id, &vector);
+        let result = storage.insert(id, &vector, None);
         assert!(matches!(result, Err(Error::DimensionMismatch { .. })));
     }
 
@@ -177,9 +198,20 @@ mod tests {
         let id = VectorId::from("my-vector");
         let vector = vec![1.0, 2.0, 3.0, 4.0];
 
-        let internal_id = storage.insert(id.clone(), &vector).unwrap();
+        let internal_id = storage.insert(id.clone(), &vector, None).unwrap();
 
         assert_eq!(storage.get_internal_id(&id), Some(internal_id));
         assert_eq!(storage.get_external_id(internal_id), Some(id));
+    }
+
+    #[test]
+    fn test_metadata() {
+        let storage = VectorStorage::new(4);
+        let id = VectorId::from("meta-test");
+        let vector = vec![1.0, 2.0, 3.0, 4.0];
+        let meta = serde_json::json!({"key": "value"});
+
+        let internal_id = storage.insert(id, &vector, Some(meta.clone())).unwrap();
+        assert_eq!(storage.get_metadata(internal_id), Some(meta));
     }
 }

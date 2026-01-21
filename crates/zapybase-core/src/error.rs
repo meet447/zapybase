@@ -26,6 +26,12 @@ pub enum Error {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Collection not found: {0}")]
+    CollectionNotFound(String),
+
+    #[error("Duplicate collection: {0}")]
+    DuplicateCollection(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

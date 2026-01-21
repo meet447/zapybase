@@ -9,6 +9,7 @@ use crate::snapshot::{Snapshot, SnapshotManager};
 use crate::storage::VectorStorage;
 use crate::types::VectorId;
 use crate::wal::{Wal, WalEntry};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,7 +104,8 @@ impl PersistentVectorDb {
 
             // Restore vectors from snapshot
             for stored in snapshot.vectors {
-                self.storage.insert(stored.id, &stored.vector)?;
+                self.storage
+                    .insert(stored.id, &stored.vector, stored.metadata)?;
             }
 
             // Restore HNSW state if available
@@ -124,10 +126,14 @@ impl PersistentVectorDb {
 
         for entry in entries {
             match entry {
-                WalEntry::Insert { id, vector } => {
+                WalEntry::Insert {
+                    id,
+                    vector,
+                    metadata,
+                } => {
                     // Skip if already in storage (duplicate)
                     if self.storage.get_internal_id(&id).is_none() {
-                        let internal_id = self.storage.insert(id, &vector)?;
+                        let internal_id = self.storage.insert(id, &vector, metadata)?;
                         self.index.insert(internal_id, &vector, &self.storage)?;
                     }
                 }
@@ -144,8 +150,13 @@ impl PersistentVectorDb {
         Ok(())
     }
 
-    /// Insert a vector with the given ID
-    pub fn insert(&mut self, id: impl Into<VectorId>, vector: &[f32]) -> Result<()> {
+    /// Insert a vector with the given ID and optional metadata
+    pub fn insert(
+        &mut self,
+        id: impl Into<VectorId>,
+        vector: &[f32],
+        metadata: Option<Value>,
+    ) -> Result<()> {
         let id = id.into();
 
         if vector.len() != self.config.dimensions {
@@ -159,6 +170,7 @@ impl PersistentVectorDb {
         self.wal.append(WalEntry::Insert {
             id: id.clone(),
             vector: vector.to_vec(),
+            metadata: metadata.clone(),
         })?;
 
         if self.config.sync_writes {
@@ -166,7 +178,7 @@ impl PersistentVectorDb {
         }
 
         // Then apply to in-memory structures
-        let internal_id = self.storage.insert(id, vector)?;
+        let internal_id = self.storage.insert(id, vector, metadata)?;
         self.index.insert(internal_id, vector, &self.storage)?;
 
         // Check if we need to checkpoint
@@ -178,7 +190,7 @@ impl PersistentVectorDb {
     }
 
     /// Search for the k nearest neighbors
-    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32)>> {
+    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -188,12 +200,13 @@ impl PersistentVectorDb {
 
         let results = self.index.search(query, k, &self.storage)?;
 
-        let mapped: Vec<(VectorId, f32)> = results
+        let mapped: Vec<(VectorId, f32, Option<Value>)> = results
             .into_iter()
             .filter_map(|(internal_id, distance)| {
-                self.storage
-                    .get_external_id(internal_id)
-                    .map(|ext_id| (ext_id, distance))
+                self.storage.get_external_id(internal_id).map(|ext_id| {
+                    let metadata = self.storage.get_metadata(internal_id);
+                    (ext_id, distance, metadata)
+                })
             })
             .collect();
 
@@ -215,7 +228,8 @@ impl PersistentVectorDb {
         for internal_id in self.storage.all_internal_ids() {
             if let Some(ext_id) = self.storage.get_external_id(internal_id) {
                 if let Some(vector) = self.storage.get(internal_id) {
-                    snapshot.add_vector(ext_id, vector);
+                    let metadata = self.storage.get_metadata(internal_id);
+                    snapshot.add_vector(ext_id, vector, metadata);
                 }
             }
         }
@@ -276,9 +290,9 @@ mod tests {
 
         let mut db = PersistentVectorDb::open(dir.path(), config).unwrap();
 
-        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
-        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0]).unwrap();
+        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0], None).unwrap();
 
         let results = db.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
 
@@ -297,8 +311,8 @@ mod tests {
         // Insert some vectors
         {
             let mut db = PersistentVectorDb::open(dir.path(), config.clone()).unwrap();
-            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
             db.sync().unwrap();
         }
 
@@ -323,12 +337,12 @@ mod tests {
         // Insert vectors and checkpoint
         {
             let mut db = PersistentVectorDb::open(dir.path(), config.clone()).unwrap();
-            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
             db.checkpoint().unwrap();
 
             // Add more after checkpoint
-            db.insert("vec3", &[0.0, 0.0, 1.0, 0.0]).unwrap();
+            db.insert("vec3", &[0.0, 0.0, 1.0, 0.0], None).unwrap();
             db.sync().unwrap();
         }
 
@@ -357,7 +371,7 @@ mod tests {
 
             for i in 0..1000 {
                 let vector: Vec<f32> = (0..128).map(|j| ((i * j) as f32).sin()).collect();
-                db.insert(format!("v{}", i), &vector).unwrap();
+                db.insert(format!("v{}", i), &vector, None).unwrap();
             }
             db.sync().unwrap();
         }

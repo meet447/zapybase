@@ -48,6 +48,7 @@
 //! db.checkpoint().unwrap(); // Create a snapshot
 //! ```
 
+pub mod db;
 pub mod distance;
 pub mod error;
 pub mod hnsw;
@@ -62,6 +63,7 @@ pub mod types;
 pub mod wal;
 
 // Re-exports
+pub use db::Database;
 pub use distance::DistanceMetric;
 pub use error::{Error, Result};
 pub use hnsw::{HnswConfig, HnswIndex};
@@ -129,6 +131,8 @@ impl Default for QuantizedConfig {
     }
 }
 
+use serde_json::Value;
+
 /// The main vector database interface (unquantized)
 pub struct VectorDb {
     config: Config,
@@ -149,8 +153,13 @@ impl VectorDb {
         })
     }
 
-    /// Insert a vector with the given ID
-    pub fn insert(&mut self, id: impl Into<VectorId>, vector: &[f32]) -> Result<()> {
+    /// Insert a vector with the given ID and optional metadata
+    pub fn insert(
+        &mut self,
+        id: impl Into<VectorId>,
+        vector: &[f32],
+        metadata: Option<Value>,
+    ) -> Result<()> {
         let id = id.into();
 
         if vector.len() != self.config.dimensions {
@@ -160,14 +169,14 @@ impl VectorDb {
             });
         }
 
-        let internal_id = self.storage.insert(id.clone(), vector)?;
+        let internal_id = self.storage.insert(id.clone(), vector, metadata)?;
         self.index.insert(internal_id, vector, &self.storage)?;
 
         Ok(())
     }
 
     /// Search for the k nearest neighbors
-    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32)>> {
+    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -177,13 +186,14 @@ impl VectorDb {
 
         let results = self.index.search(query, k, &self.storage)?;
 
-        // Map internal IDs back to external IDs
-        let mapped: Vec<(VectorId, f32)> = results
+        // Map internal IDs back to external IDs and fetch metadata
+        let mapped: Vec<(VectorId, f32, Option<Value>)> = results
             .into_iter()
             .filter_map(|(internal_id, distance)| {
-                self.storage
-                    .get_external_id(internal_id)
-                    .map(|ext_id| (ext_id, distance))
+                self.storage.get_external_id(internal_id).map(|ext_id| {
+                    let metadata = self.storage.get_metadata(internal_id);
+                    (ext_id, distance, metadata)
+                })
             })
             .collect();
 
@@ -350,14 +360,31 @@ mod tests {
 
         let mut db = VectorDb::new(config).unwrap();
 
-        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
-        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
-        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0]).unwrap();
+        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
+        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0], None).unwrap();
 
         let results = db.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0.as_str(), "vec1"); // Exact match should be first
+    }
+
+    #[test]
+    fn test_insert_with_metadata() {
+        let config = Config {
+            dimensions: 4,
+            ..Default::default()
+        };
+
+        let mut db = VectorDb::new(config).unwrap();
+        let meta = serde_json::json!({"type": "test"});
+
+        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], Some(meta.clone()))
+            .unwrap();
+
+        let results = db.search(&[1.0, 0.0, 0.0, 0.0], 1).unwrap();
+        assert_eq!(results[0].2, Some(meta));
     }
 
     #[test]

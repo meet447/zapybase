@@ -259,7 +259,7 @@ fn run_import(
     let start = Instant::now();
     let mut skip_count = 0;
     for (i, item) in items.iter().enumerate() {
-        match db.insert(item.id.clone(), &item.vector) {
+        match db.insert(item.id.clone(), &item.vector, None) {
             Ok(_) => {}
             Err(zapybase_core::Error::DuplicateId(_)) => {
                 skip_count += 1;
@@ -319,7 +319,7 @@ fn run_query(data_dir: &PathBuf, dimensions: usize, vec_str: &str, k: usize) {
     println!("\rFound {} results in {:?}", results.len(), duration);
     println!("{:<20} {:>10}", "ID", "Distance");
     println!("{}", "-".repeat(32));
-    for (id, dist) in results {
+    for (id, dist, _) in results {
         println!("{:<20} {:>10.4}", id, dist);
     }
 }
@@ -374,7 +374,7 @@ fn run_unquantized_bench(vectors: &[Vec<f32>], dimensions: usize) {
     println!("Inserting vectors (with HNSW indexing)...");
     let start = Instant::now();
     for (i, vector) in vectors.iter().enumerate() {
-        db.insert(format!("vec_{}", i), vector)
+        db.insert(format!("vec_{}", i), vector, None)
             .expect("Failed to insert");
 
         if (i + 1) % 1000 == 0 {
@@ -488,7 +488,7 @@ fn run_persistent_benchmark(count: usize, dimensions: usize, data_dir: &PathBuf)
     println!("Inserting vectors (persistent + HNSW)...");
     let start = Instant::now();
     for (i, vector) in vectors.iter().enumerate() {
-        db.insert(format!("vec_{}", i), vector)
+        db.insert(format!("vec_{}", i), vector, None)
             .expect("Failed to insert");
 
         if (i + 1) % 1000 == 0 {
@@ -610,7 +610,7 @@ fn run_persistence_test(data_dir: &PathBuf, count: usize, dimensions: usize) {
 
         for i in 0..count {
             let vector: Vec<f32> = (0..dimensions).map(|j| ((i * j) as f32).sin()).collect();
-            db.insert(format!("v{}", i), &vector)
+            db.insert(format!("v{}", i), &vector, None)
                 .expect("Failed to insert");
         }
 
@@ -640,7 +640,7 @@ fn run_persistence_test(data_dir: &PathBuf, count: usize, dimensions: usize) {
         let results = db.search(&query, 5).expect("Search failed");
 
         println!("  Search test: found {} results", results.len());
-        for (id, dist) in results.iter().take(3) {
+        for (id, dist, _) in results.iter().take(3) {
             println!("    {} (distance: {:.4})", id, dist);
         }
     }
@@ -654,7 +654,7 @@ fn run_persistence_test(data_dir: &PathBuf, count: usize, dimensions: usize) {
         let additional = 100;
         for i in count..(count + additional) {
             let vector: Vec<f32> = (0..dimensions).map(|j| ((i * j) as f32).cos()).collect();
-            db.insert(format!("v{}", i), &vector)
+            db.insert(format!("v{}", i), &vector, None)
                 .expect("Failed to insert");
         }
 
@@ -955,7 +955,7 @@ fn run_validation(count: usize, dimensions: usize, k: usize) {
         };
         let mut db = VectorDb::new(config).unwrap();
         for (i, v) in vectors.iter().enumerate() {
-            db.insert(format!("{}", i), v).unwrap();
+            db.insert(format!("{}", i), v, None).unwrap();
         }
 
         let (recall, latency) = measure_db_performance(&db, &queries, &ground_truth, k);
@@ -1043,7 +1043,7 @@ fn run_stress_test(count: usize, dimensions: usize, threads: usize, data_dir: &P
     let start = Instant::now();
     for i in 0..count {
         let vec: Vec<f32> = (0..dimensions).map(|_| rand::random::<f32>()).collect();
-        db.insert(format!("v{}", i), &vec).unwrap();
+        db.insert(format!("v{}", i), &vec, None).unwrap();
         if (i + 1) % 5000 == 0 {
             print!("\r  Ingested: {}/{}", i + 1, count);
             use std::io::Write;
@@ -1140,8 +1140,10 @@ fn measure_db_performance(
 
     for (i, query) in queries.iter().enumerate() {
         let results = db.search(query, k).unwrap();
-        let result_ids: std::collections::HashSet<String> =
-            results.into_iter().map(|(id, _)| id.to_string()).collect();
+        let result_ids: std::collections::HashSet<String> = results
+            .into_iter()
+            .map(|(id, _, _)| id.to_string())
+            .collect();
 
         for &id_idx in &truth[i] {
             if result_ids.contains(&format!("{}", id_idx)) {

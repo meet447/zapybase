@@ -8,6 +8,7 @@ use crate::hnsw::HnswState;
 use crate::types::VectorId;
 use bincode::{deserialize_from, serialize_into};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -23,6 +24,7 @@ const SNAPSHOT_VERSION: u8 = 2;
 pub struct StoredVector {
     pub id: VectorId,
     pub vector: Vec<f32>,
+    pub metadata: Option<Value>,
 }
 
 /// Complete database snapshot
@@ -53,8 +55,12 @@ impl Snapshot {
     }
 
     /// Add a vector to the snapshot
-    pub fn add_vector(&mut self, id: VectorId, vector: Vec<f32>) {
-        self.vectors.push(StoredVector { id, vector });
+    pub fn add_vector(&mut self, id: VectorId, vector: Vec<f32>, metadata: Option<Value>) {
+        self.vectors.push(StoredVector {
+            id,
+            vector,
+            metadata,
+        });
     }
 
     /// Set the index state
@@ -259,8 +265,8 @@ mod tests {
         let manager = SnapshotManager::new(dir.path()).unwrap();
 
         let mut snapshot = Snapshot::new(1, 100, 4);
-        snapshot.add_vector("v1".into(), vec![1.0, 2.0, 3.0, 4.0]);
-        snapshot.add_vector("v2".into(), vec![5.0, 6.0, 7.0, 8.0]);
+        snapshot.add_vector("v1".into(), vec![1.0, 2.0, 3.0, 4.0], None);
+        snapshot.add_vector("v2".into(), vec![5.0, 6.0, 7.0, 8.0], None);
 
         let path = manager.save(&snapshot).unwrap();
         assert!(path.exists());
@@ -281,7 +287,7 @@ mod tests {
         // Create multiple snapshots
         for i in 1..=5 {
             let mut snapshot = Snapshot::new(i, i * 10, 4);
-            snapshot.add_vector(format!("v{}", i).into(), vec![i as f32]);
+            snapshot.add_vector(format!("v{}", i).into(), vec![i as f32], None);
             manager.save(&snapshot).unwrap();
         }
 
@@ -321,7 +327,7 @@ mod tests {
         // Add 5000 vectors (realistic size)
         for i in 0..5000 {
             let vector: Vec<f32> = (0..384).map(|j| (i * j) as f32 / 1000.0).collect();
-            snapshot.add_vector(format!("v{}", i).into(), vector);
+            snapshot.add_vector(format!("v{}", i).into(), vector, None);
         }
 
         let path = manager.save(&snapshot).unwrap();

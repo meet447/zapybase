@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 use crate::types::VectorId;
 use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -26,7 +27,11 @@ const WAL_VERSION: u8 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WalEntry {
     /// Insert a new vector
-    Insert { id: VectorId, vector: Vec<f32> },
+    Insert {
+        id: VectorId,
+        vector: Vec<f32>,
+        metadata: Option<Value>,
+    },
     /// Delete a vector
     Delete { id: VectorId },
     /// Checkpoint marker (snapshot was taken)
@@ -372,6 +377,7 @@ mod tests {
             .append(WalEntry::Insert {
                 id: "test".into(),
                 vector: vec![1.0, 2.0, 3.0],
+                metadata: None,
             })
             .unwrap();
 
@@ -389,11 +395,13 @@ mod tests {
             wal.append(WalEntry::Insert {
                 id: "v1".into(),
                 vector: vec![1.0, 2.0],
+                metadata: None,
             })
             .unwrap();
             wal.append(WalEntry::Insert {
                 id: "v2".into(),
                 vector: vec![3.0, 4.0],
+                metadata: None,
             })
             .unwrap();
             wal.append(WalEntry::Delete { id: "v1".into() }).unwrap();
@@ -408,7 +416,7 @@ mod tests {
             assert_eq!(entries.len(), 3);
 
             match &entries[0] {
-                WalEntry::Insert { id, vector } => {
+                WalEntry::Insert { id, vector, .. } => {
                     assert_eq!(id.as_str(), "v1");
                     assert_eq!(vector, &vec![1.0, 2.0]);
                 }
@@ -435,6 +443,7 @@ mod tests {
                 wal.append(WalEntry::Insert {
                     id: format!("v{}", i).into(),
                     vector: vec![i as f32],
+                    metadata: None,
                 })
                 .unwrap();
             }
@@ -450,6 +459,7 @@ mod tests {
                 .append(WalEntry::Insert {
                     id: "v10".into(),
                     vector: vec![10.0],
+                    metadata: None,
                 })
                 .unwrap();
             assert_eq!(seq, 11);
@@ -467,6 +477,7 @@ mod tests {
             wal.append(WalEntry::Insert {
                 id: format!("v{}", i).into(),
                 vector: vec![i as f32],
+                metadata: None,
             })
             .unwrap();
         }
@@ -483,6 +494,7 @@ mod tests {
             .append(WalEntry::Insert {
                 id: "new".into(),
                 vector: vec![1.0],
+                metadata: None,
             })
             .unwrap();
         assert_eq!(seq, 6); // Sequence continues
