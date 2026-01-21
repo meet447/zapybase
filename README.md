@@ -7,15 +7,15 @@
 
 ---
 
-## 🚀 Performance Snapshot (M2 Mac)
+## 🚀 Performance Snapshot
 
 We validate every build for **Recall** (accuracy) and **Latency**.
 
 | Mode | Recall @ 10 | Latency (Avg) | Compression |
 | :--- | :--- | :--- | :--- |
-| **HNSW (In-Memory)** | **99.4%** | 0.21 ms | 1x |
-| **SQ8 (Quantized)** | **99.0%** | **0.15 ms** | **4x** |
-| **Binary (1-bit)** | 28.4% | 0.23 ms | 32x |
+| **HNSW (In-Memory)** | **98.5%** | 0.22 ms | 1x |
+| **SQ8 (Quantized)** | **98.9%** | **0.16 ms** | **3.76x** |
+| **Binary (1-bit)** | 25.8% | 0.23 ms | 32.0x |
 
 ---
 
@@ -28,6 +28,8 @@ We validate every build for **Recall** (accuracy) and **Latency**.
   - **Binary**: 32x compression for massive datasets.
 - **ACID-Compliant Persistence**: Write-Ahead Log (WAL) and Snapshots for crash-safe data.
 - **Mmap Support**: Disk-resident vectors for datasets larger than RAM.
+- **Collections & Metadata**: Manage multiple collections with rich JSON metadata.
+- **HTTP Server**: Built-in high-performance Axum server for easy deployment.
 
 ---
 
@@ -56,16 +58,56 @@ fn main() {
     };
     let mut db = PersistentVectorDb::open("./zapybase_data", config).unwrap();
 
-    // 2. Insert Vector
+    // 2. Insert Vector with Metadata
     let vec = vec![0.1; 384];
-    db.insert("doc_1", &vec).unwrap();
+    let meta = serde_json::json!({"title": "ZappyBase Guide"});
+    db.insert("doc_1", &vec, Some(meta)).unwrap();
 
     // 3. Search
     let query = vec![0.1; 384];
     let results = db.search(&query, 5).unwrap();
     
-    println!("Found match: {}", results[0].0);
+    println!("Found match: {} (meta: {:?})", results[0].0, results[0].2);
 }
+```
+
+---
+
+## 🌐 HTTP Server
+
+ZappyBase includes a high-performance HTTP server powered by **Axum**.
+
+### Start the Server
+```bash
+cargo run --release -p zapybase-server
+# Server listening on 0.0.0.0:3000
+```
+
+### API Usage
+
+**Create Collection**
+```bash
+curl -X POST http://localhost:3000/collections \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "docs", "dimensions": 384 }'
+```
+
+**Insert Vector**
+```bash
+curl -X POST http://localhost:3000/collections/docs/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "vec1",
+    "vector": [0.1, 0.2, 0.3, ...],
+    "metadata": { "category": "AI", "tags": ["fast"] }
+  }'
+```
+
+**Search**
+```bash
+curl -X POST http://localhost:3000/collections/docs/search \
+  -H "Content-Type: application/json" \
+  -d '{ "vector": [0.1, 0.2, 0.3, ...], "k": 5 }'
 ```
 
 ---
@@ -94,9 +136,11 @@ cargo run --release -- persist
 - [x] SQ8 & Binary Quantization
 - [x] WAL & Snapshot Persistence
 - [x] Mmap Storage Backend
+- [x] Collections & Metadata Support
+- [x] HTTP Server (Axum)
 - [ ] UniFFI Bindings (Python, Swift, Kotlin)
 - [ ] Zero-Config RAG Pipeline (Candle Integration)
-- [ ] HTTP/gRPC Server Layer
+- [ ] Distributed Consensus (Raft)
 
 ## 📄 License
 
