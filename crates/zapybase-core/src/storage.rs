@@ -1,0 +1,185 @@
+//! Vector storage implementation
+//!
+//! Provides efficient storage and retrieval of vectors with ID mapping.
+
+use crate::error::{Error, Result};
+use crate::types::{InternalId, VectorId};
+use parking_lot::RwLock;
+use std::collections::HashMap;
+
+/// Trait for vector storage backends
+pub trait VectorStorageTrait {
+    /// Get vector data for distance calculations
+    fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>>;
+}
+
+/// In-memory vector storage with ID mapping
+pub struct VectorStorage {
+    /// Dimensionality of stored vectors
+    dimensions: usize,
+
+    /// Flat storage of all vectors (contiguous memory for cache efficiency)
+    vectors: RwLock<Vec<f32>>,
+
+    /// Map from external ID to internal ID
+    id_to_internal: RwLock<HashMap<VectorId, InternalId>>,
+
+    /// Map from internal ID to external ID
+    internal_to_id: RwLock<Vec<VectorId>>,
+}
+
+impl VectorStorage {
+    /// Create a new vector storage with the given dimensionality
+    pub fn new(dimensions: usize) -> Self {
+        Self {
+            dimensions,
+            vectors: RwLock::new(Vec::new()),
+            id_to_internal: RwLock::new(HashMap::new()),
+            internal_to_id: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Insert a vector and return its internal ID
+    pub fn insert(&self, id: VectorId, vector: &[f32]) -> Result<InternalId> {
+        if vector.len() != self.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.dimensions,
+                got: vector.len(),
+            });
+        }
+
+        let mut id_to_internal = self.id_to_internal.write();
+        if id_to_internal.contains_key(&id) {
+            return Err(Error::DuplicateId(id.to_string()));
+        }
+
+        let mut vectors = self.vectors.write();
+        let mut internal_to_id = self.internal_to_id.write();
+
+        let internal_id = InternalId::from(internal_to_id.len());
+
+        // Append vector to flat storage
+        vectors.extend_from_slice(vector);
+
+        // Update mappings
+        id_to_internal.insert(id.clone(), internal_id);
+        internal_to_id.push(id);
+
+        Ok(internal_id)
+    }
+
+    /// Get a vector by its internal ID
+    #[inline]
+    pub fn get(&self, internal_id: InternalId) -> Option<Vec<f32>> {
+        let vectors = self.vectors.read();
+        let start = internal_id.as_usize() * self.dimensions;
+        let end = start + self.dimensions;
+
+        if end <= vectors.len() {
+            Some(vectors[start..end].to_vec())
+        } else {
+            None
+        }
+    }
+
+    /// Get a reference to vector data (for distance calculations)
+    /// Returns a copy to avoid holding locks during computation
+    #[inline]
+    pub fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>> {
+        self.get(internal_id)
+    }
+
+    /// Get internal ID from external ID
+    pub fn get_internal_id(&self, id: &VectorId) -> Option<InternalId> {
+        self.id_to_internal.read().get(id).copied()
+    }
+
+    /// Get external ID from internal ID
+    pub fn get_external_id(&self, internal_id: InternalId) -> Option<VectorId> {
+        let internal_to_id = self.internal_to_id.read();
+        internal_to_id.get(internal_id.as_usize()).cloned()
+    }
+
+    /// Get the number of stored vectors
+    pub fn len(&self) -> usize {
+        self.internal_to_id.read().len()
+    }
+
+    /// Check if storage is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get all internal IDs
+    pub fn all_internal_ids(&self) -> Vec<InternalId> {
+        let internal_to_id = self.internal_to_id.read();
+        (0..internal_to_id.len()).map(InternalId::from).collect()
+    }
+
+    /// Get dimensionality
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
+/// Implement the trait for VectorStorage
+impl VectorStorageTrait for VectorStorage {
+    fn get_vector_data(&self, internal_id: InternalId) -> Option<Vec<f32>> {
+        self.get(internal_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_and_get() {
+        let storage = VectorStorage::new(4);
+
+        let id = VectorId::from("test");
+        let vector = vec![1.0, 2.0, 3.0, 4.0];
+
+        let internal_id = storage.insert(id.clone(), &vector).unwrap();
+
+        let retrieved = storage.get(internal_id).unwrap();
+        assert_eq!(retrieved, vector);
+    }
+
+    #[test]
+    fn test_duplicate_id() {
+        let storage = VectorStorage::new(4);
+
+        let id = VectorId::from("test");
+        let vector = vec![1.0, 2.0, 3.0, 4.0];
+
+        storage.insert(id.clone(), &vector).unwrap();
+
+        let result = storage.insert(id, &vector);
+        assert!(matches!(result, Err(Error::DuplicateId(_))));
+    }
+
+    #[test]
+    fn test_dimension_mismatch() {
+        let storage = VectorStorage::new(4);
+
+        let id = VectorId::from("test");
+        let vector = vec![1.0, 2.0, 3.0]; // Only 3 dimensions
+
+        let result = storage.insert(id, &vector);
+        assert!(matches!(result, Err(Error::DimensionMismatch { .. })));
+    }
+
+    #[test]
+    fn test_id_mapping() {
+        let storage = VectorStorage::new(4);
+
+        let id = VectorId::from("my-vector");
+        let vector = vec![1.0, 2.0, 3.0, 4.0];
+
+        let internal_id = storage.insert(id.clone(), &vector).unwrap();
+
+        assert_eq!(storage.get_internal_id(&id), Some(internal_id));
+        assert_eq!(storage.get_external_id(internal_id), Some(id));
+    }
+}

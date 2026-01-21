@@ -1,0 +1,357 @@
+//! Quantized vector storage implementation
+//!
+//! Provides memory-efficient storage using SQ8 or Binary quantization.
+
+use crate::distance::DistanceMetric;
+use crate::error::{Error, Result};
+use crate::quantization::{BinaryQuantizer, QuantizationType, SQ8Metadata, SQ8Quantizer};
+use crate::types::{InternalId, VectorId};
+use parking_lot::RwLock;
+use std::collections::HashMap;
+
+/// Quantized vector storage with configurable compression
+pub struct QuantizedStorage {
+    /// Dimensionality of stored vectors
+    dimensions: usize,
+
+    /// Quantization type
+    quantization: QuantizationType,
+
+    /// SQ8 quantizer (if using SQ8)
+    sq8_quantizer: Option<SQ8Quantizer>,
+
+    /// Binary quantizer (if using Binary)
+    binary_quantizer: Option<BinaryQuantizer>,
+
+    /// SQ8: Quantized vectors (contiguous u8 storage)
+    sq8_vectors: RwLock<Vec<u8>>,
+
+    /// SQ8: Metadata for each vector
+    sq8_metadata: RwLock<Vec<SQ8Metadata>>,
+
+    /// Binary: Quantized vectors
+    binary_vectors: RwLock<Vec<u8>>,
+
+    /// Original f32 vectors (for re-ranking if needed)
+    /// Only stored if keep_originals is true
+    original_vectors: RwLock<Option<Vec<f32>>>,
+
+    /// Whether to keep original vectors for re-ranking
+    keep_originals: bool,
+
+    /// Map from external ID to internal ID
+    id_to_internal: RwLock<HashMap<VectorId, InternalId>>,
+
+    /// Map from internal ID to external ID
+    internal_to_id: RwLock<Vec<VectorId>>,
+}
+
+impl QuantizedStorage {
+    /// Create a new quantized storage
+    pub fn new(dimensions: usize, quantization: QuantizationType, keep_originals: bool) -> Self {
+        let sq8_quantizer = match quantization {
+            QuantizationType::SQ8 => Some(SQ8Quantizer::new(dimensions)),
+            _ => None,
+        };
+
+        let binary_quantizer = match quantization {
+            QuantizationType::Binary => Some(BinaryQuantizer::new(dimensions)),
+            _ => None,
+        };
+
+        // For None quantization, we always need to store originals
+        let needs_originals = keep_originals || quantization == QuantizationType::None;
+        let original_vectors = if needs_originals {
+            Some(Vec::new())
+        } else {
+            None
+        };
+
+        Self {
+            dimensions,
+            quantization,
+            sq8_quantizer,
+            binary_quantizer,
+            sq8_vectors: RwLock::new(Vec::new()),
+            sq8_metadata: RwLock::new(Vec::new()),
+            binary_vectors: RwLock::new(Vec::new()),
+            original_vectors: RwLock::new(original_vectors),
+            keep_originals,
+            id_to_internal: RwLock::new(HashMap::new()),
+            internal_to_id: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Insert a vector and return its internal ID
+    pub fn insert(&self, id: VectorId, vector: &[f32]) -> Result<InternalId> {
+        if vector.len() != self.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.dimensions,
+                got: vector.len(),
+            });
+        }
+
+        let mut id_to_internal = self.id_to_internal.write();
+        if id_to_internal.contains_key(&id) {
+            return Err(Error::DuplicateId(id.to_string()));
+        }
+
+        let mut internal_to_id = self.internal_to_id.write();
+        let internal_id = InternalId::from(internal_to_id.len());
+
+        // Store quantized version
+        match self.quantization {
+            QuantizationType::None => {
+                // For None quantization, store in original_vectors
+                let mut originals = self.original_vectors.write();
+                if let Some(ref mut vecs) = *originals {
+                    vecs.extend_from_slice(vector);
+                }
+            }
+            QuantizationType::SQ8 => {
+                let quantizer = self.sq8_quantizer.as_ref().unwrap();
+                let (quantized, metadata) = quantizer.quantize(vector);
+
+                let mut sq8_vectors = self.sq8_vectors.write();
+                let mut sq8_metadata = self.sq8_metadata.write();
+
+                sq8_vectors.extend_from_slice(&quantized);
+                sq8_metadata.push(metadata);
+            }
+            QuantizationType::Binary => {
+                let quantizer = self.binary_quantizer.as_ref().unwrap();
+                let quantized = quantizer.quantize(vector);
+
+                let mut binary_vectors = self.binary_vectors.write();
+                binary_vectors.extend_from_slice(&quantized);
+            }
+        }
+
+        // Store original if requested
+        if self.keep_originals && self.quantization != QuantizationType::None {
+            let mut originals = self.original_vectors.write();
+            if let Some(ref mut vecs) = *originals {
+                vecs.extend_from_slice(vector);
+            }
+        }
+
+        // Update mappings
+        id_to_internal.insert(id.clone(), internal_id);
+        internal_to_id.push(id);
+
+        Ok(internal_id)
+    }
+
+    /// Calculate distance from query to stored vector
+    #[inline]
+    pub fn distance(
+        &self,
+        query: &[f32],
+        internal_id: InternalId,
+        metric: DistanceMetric,
+    ) -> Option<f32> {
+        match self.quantization {
+            QuantizationType::None => {
+                let originals = self.original_vectors.read();
+                if let Some(ref vecs) = *originals {
+                    let start = internal_id.as_usize() * self.dimensions;
+                    let end = start + self.dimensions;
+                    if end <= vecs.len() {
+                        return Some(metric.distance(query, &vecs[start..end]));
+                    }
+                }
+                None
+            }
+            QuantizationType::SQ8 => {
+                let quantizer = self.sq8_quantizer.as_ref()?;
+                let sq8_vectors = self.sq8_vectors.read();
+                let sq8_metadata = self.sq8_metadata.read();
+
+                let idx = internal_id.as_usize();
+                if idx >= sq8_metadata.len() {
+                    return None;
+                }
+
+                let start = idx * self.dimensions;
+                let end = start + self.dimensions;
+                if end > sq8_vectors.len() {
+                    return None;
+                }
+
+                let quantized = &sq8_vectors[start..end];
+                let metadata = &sq8_metadata[idx];
+
+                Some(quantizer.asymmetric_distance(query, quantized, metadata, metric))
+            }
+            QuantizationType::Binary => {
+                let quantizer = self.binary_quantizer.as_ref()?;
+                let binary_vectors = self.binary_vectors.read();
+
+                let byte_size = quantizer.byte_size();
+                let start = internal_id.as_usize() * byte_size;
+                let end = start + byte_size;
+
+                if end > binary_vectors.len() {
+                    return None;
+                }
+
+                // Quantize query on the fly
+                let query_binary = quantizer.quantize(query);
+                let stored = &binary_vectors[start..end];
+
+                let hamming = quantizer.hamming_distance(&query_binary, stored);
+                Some(quantizer.hamming_to_cosine(hamming))
+            }
+        }
+    }
+
+    /// Get original vector (for re-ranking)
+    pub fn get_original(&self, internal_id: InternalId) -> Option<Vec<f32>> {
+        let originals = self.original_vectors.read();
+        if let Some(ref vecs) = *originals {
+            let start = internal_id.as_usize() * self.dimensions;
+            let end = start + self.dimensions;
+            if end <= vecs.len() {
+                return Some(vecs[start..end].to_vec());
+            }
+        }
+        None
+    }
+
+    /// Get external ID from internal ID
+    pub fn get_external_id(&self, internal_id: InternalId) -> Option<VectorId> {
+        let internal_to_id = self.internal_to_id.read();
+        internal_to_id.get(internal_id.as_usize()).cloned()
+    }
+
+    /// Get all internal IDs
+    pub fn all_internal_ids(&self) -> Vec<InternalId> {
+        let internal_to_id = self.internal_to_id.read();
+        (0..internal_to_id.len()).map(InternalId::from).collect()
+    }
+
+    /// Get the number of stored vectors
+    pub fn len(&self) -> usize {
+        self.internal_to_id.read().len()
+    }
+
+    /// Check if storage is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get memory usage in bytes
+    pub fn memory_usage(&self) -> usize {
+        let quantized_size = match self.quantization {
+            QuantizationType::None => 0,
+            QuantizationType::SQ8 => {
+                self.sq8_vectors.read().len()
+                    + self.sq8_metadata.read().len() * std::mem::size_of::<SQ8Metadata>()
+            }
+            QuantizationType::Binary => self.binary_vectors.read().len(),
+        };
+
+        let original_size = self
+            .original_vectors
+            .read()
+            .as_ref()
+            .map(|v| v.len() * 4)
+            .unwrap_or(0);
+
+        quantized_size + original_size
+    }
+
+    /// Get compression ratio compared to f32 storage
+    pub fn compression_ratio(&self) -> f32 {
+        let count = self.len();
+        if count == 0 {
+            return 1.0;
+        }
+
+        let f32_size = count * self.dimensions * 4;
+        let actual_size = self.memory_usage();
+
+        if actual_size == 0 {
+            return 1.0;
+        }
+
+        f32_size as f32 / actual_size as f32
+    }
+
+    /// Get dimensionality
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    /// Get quantization type
+    pub fn quantization_type(&self) -> QuantizationType {
+        self.quantization
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sq8_storage() {
+        let storage = QuantizedStorage::new(4, QuantizationType::SQ8, false);
+
+        let id = VectorId::from("test");
+        let vector = vec![1.0, 0.0, 0.0, 0.0];
+
+        let internal_id = storage.insert(id, &vector).unwrap();
+
+        let dist = storage
+            .distance(&vector, internal_id, DistanceMetric::Cosine)
+            .unwrap();
+
+        // Distance to self should be ~0
+        assert!(dist < 0.01, "dist={}", dist);
+    }
+
+    #[test]
+    fn test_binary_storage() {
+        let storage = QuantizedStorage::new(8, QuantizationType::Binary, false);
+
+        let v1 = vec![1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0];
+        let v2 = vec![1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
+
+        let id1 = storage.insert("v1".into(), &v1).unwrap();
+        let id2 = storage.insert("v2".into(), &v2).unwrap();
+
+        let dist1 = storage.distance(&v1, id1, DistanceMetric::Cosine).unwrap();
+        let dist2 = storage.distance(&v1, id2, DistanceMetric::Cosine).unwrap();
+
+        // Distance to self should be 0
+        assert!(dist1 < 0.01, "dist1={}", dist1);
+        // Distance to different vector should be > 0
+        assert!(dist2 > 0.0, "dist2={}", dist2);
+    }
+
+    #[test]
+    fn test_keep_originals() {
+        let storage = QuantizedStorage::new(4, QuantizationType::SQ8, true);
+
+        let vector = vec![1.0, 2.0, 3.0, 4.0];
+        let internal_id = storage.insert("test".into(), &vector).unwrap();
+
+        let original = storage.get_original(internal_id).unwrap();
+        assert_eq!(original, vector);
+    }
+
+    #[test]
+    fn test_compression_ratio() {
+        let storage = QuantizedStorage::new(384, QuantizationType::SQ8, false);
+
+        // Insert 100 vectors
+        for i in 0..100 {
+            let vector: Vec<f32> = (0..384).map(|j| (i * j) as f32 / 1000.0).collect();
+            storage.insert(format!("v{}", i).into(), &vector).unwrap();
+        }
+
+        let ratio = storage.compression_ratio();
+        // SQ8 should give ~4x compression (minus metadata overhead)
+        assert!(ratio > 3.5, "compression ratio: {}", ratio);
+    }
+}
