@@ -240,10 +240,11 @@ cargo run --release -- persist
 * [x] WAL & Snapshot Persistence
 * [x] Mmap Storage Backend
 * [x] Collections & Metadata Support
+* [x] Metadata Filtering (Exact, And, Or, Not)
 * [x] HTTP Server (Axum)
+* [ ] WASM / Browser Support (Edge)
 * [ ] UniFFI Bindings (Python, Swift, Kotlin)
 * [ ] Zero-Config RAG Pipeline (Candle Integration)
-* [ ] Distributed Consensus (Raft)
 
 ## License
 
