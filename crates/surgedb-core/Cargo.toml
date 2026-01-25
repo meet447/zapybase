@@ -37,7 +37,7 @@ persistence = ["dep:libc"]
 # Parallel processing with rayon - excluded from WASM
 parallel = ["dep:rayon", "dep:parking_lot"]
 # WASM target support
-wasm = ["getrandom", "dep:js-sys", "dep:wasm-bindgen"]
+wasm = ["getrandom", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
 
 [dependencies.js-sys]
 version = "0.3"
@@ -45,4 +45,9 @@ optional = true
 
 [dependencies.wasm-bindgen]
 version = "0.2"
+optional = true
+
+[dependencies.web-sys]
+version = "0.3"
+features = ["console"]
 optional = true

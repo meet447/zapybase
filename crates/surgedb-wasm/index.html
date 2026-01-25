@@ -115,13 +115,18 @@
                 // Insert some vectors
                 const categories = ['tech', 'science', 'art', 'music'];
                 for (let i = 0; i < 100; i++) {
-                    const vec = randomVector(dimensions);
-                    const metadata = { 
-                        id: i, 
-                        category: categories[i % categories.length],
-                        title: `Document ${i}`
-                    };
-                    db.insert(`doc_${i}`, vec, metadata);
+                    try {
+                        const vec = randomVector(dimensions);
+                        const metadata = { 
+                            id: i, 
+                            category: categories[i % categories.length],
+                            title: `Document ${i}`
+                        };
+                        db.insert(`doc_${i}`, vec, metadata);
+                    } catch (e) {
+                        log(`Error inserting doc_${i}: ${e}`);
+                        throw e;
+                    }
                 }
                 log(`Inserted 100 vectors`);
                 updateStats();

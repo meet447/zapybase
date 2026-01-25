@@ -1302,6 +1302,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

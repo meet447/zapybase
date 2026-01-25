@@ -197,7 +197,15 @@ impl HnswIndex {
     /// Generate a random level for a new node
     fn random_level(&self) -> usize {
         #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-        let r = js_sys::Math::random();
+        let r = {
+            let val = js_sys::Math::random();
+            // Handle edge case where random() returns 0.0 (causes -inf ln)
+            if val < f64::EPSILON {
+                f64::EPSILON
+            } else {
+                val
+            }
+        };
 
         #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
         let r: f64 = {
@@ -416,7 +424,7 @@ impl HnswIndex {
             return Ok(());
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("Entry point should be Some here");
         let current_max_layer = *max_layer;
 
         // Search from top layer to node_level + 1, finding the closest node
