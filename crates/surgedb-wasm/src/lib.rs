@@ -166,6 +166,27 @@ impl SurgeDB {
             .map_err(|e| SurgeError::from(e).into())
     }
 
+    /// Get a vector by ID
+    ///
+    /// @param id - The ID of the vector
+    /// @returns { id, vector, metadata } or undefined if not found
+    #[wasm_bindgen]
+    pub fn get(&self, id: String) -> Result<JsValue, JsValue> {
+        let result = self.inner.get(&id).map_err(|e| SurgeError::from(e))?;
+
+        match result {
+            Some((vector, metadata)) => {
+                let entry = VectorEntry {
+                    id,
+                    vector,
+                    metadata,
+                };
+                serde_wasm_bindgen::to_value(&entry).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::UNDEFINED),
+        }
+    }
+
     /// Search for the k nearest neighbors
     ///
     /// @param query - Float32Array query vector
@@ -293,6 +314,24 @@ impl SurgeDBQuantized {
         self.inner
             .delete(id)
             .map_err(|e| SurgeError::from(e).into())
+    }
+
+    /// Get a vector by ID
+    #[wasm_bindgen]
+    pub fn get(&self, id: String) -> Result<JsValue, JsValue> {
+        let result = self.inner.get(&id).map_err(|e| SurgeError::from(e))?;
+
+        match result {
+            Some((vector, metadata)) => {
+                let entry = VectorEntry {
+                    id,
+                    vector,
+                    metadata,
+                };
+                serde_wasm_bindgen::to_value(&entry).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::UNDEFINED),
+        }
     }
 
     /// Search for the k nearest neighbors
