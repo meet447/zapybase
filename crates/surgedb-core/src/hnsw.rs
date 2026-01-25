@@ -201,16 +201,60 @@ impl HnswIndex {
             web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
                 "HNSW: Generating random level",
             ));
-            let r = {
-                let val = js_sys::Math::random();
 
-                if val < f64::EPSILON {
-                    f64::EPSILON
-                } else {
-                    val
-                }
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                "Step 1: Calling Math.random()",
+            ));
+            let val = js_sys::Math::random();
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "Step 2: Got val: {}",
+                val
+            )));
+
+            let r = if val < f64::EPSILON {
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                    "Step 2a: Handling zero/epsilon",
+                ));
+                f64::EPSILON
+            } else {
+                val
             };
-            (-r.ln() * self.config.ml).floor() as usize
+
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                "Step 3: Calling js_sys::Math::log",
+            ));
+            let ln_val = js_sys::Math::log(r);
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str("Step 3b: ln calculated"));
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "Step 4: ln_val: {}",
+                ln_val
+            )));
+
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                "Step 5: Accessing config.ml",
+            ));
+            let ml = self.config.ml;
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "Step 6: ml: {}",
+                ml
+            )));
+
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                "Step 7: Calculating result",
+            ));
+            let result = (-ln_val * ml).floor();
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "Step 8: result: {}",
+                result
+            )));
+
+            let level = result as usize;
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "Step 9: final level: {}",
+                level
+            )));
+
+            level
         }
 
         #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
