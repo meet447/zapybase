@@ -313,7 +313,7 @@ fn run_query(data_dir: &PathBuf, dimensions: usize, vec_str: &str, k: usize) {
 
     println!("Searching for top {} neighbors...", k);
     let start = Instant::now();
-    let results = db.search(&query_vec, k).expect("Search failed");
+    let results = db.search(&query_vec, k, None).expect("Search failed");
     let duration = start.elapsed();
 
     println!("\rFound {} results in {:?}", results.len(), duration);
@@ -637,7 +637,7 @@ fn run_persistence_test(data_dir: &PathBuf, count: usize, dimensions: usize) {
 
         // Test search
         let query: Vec<f32> = (0..dimensions).map(|j| (j as f32).sin()).collect();
-        let results = db.search(&query, 5).expect("Search failed");
+        let results = db.search(&query, 5, None).expect("Search failed");
 
         println!("  Search test: found {} results", results.len());
         for (id, dist, _) in results.iter().take(3) {
@@ -682,7 +682,7 @@ fn run_search_bench(db: &VectorDb, vectors: &[Vec<f32>], method: &str) {
     let start = Instant::now();
     for i in 0..query_count {
         let query = &vectors[i % vectors.len()];
-        let _ = db.search(query, k).expect("Search failed");
+        let _ = db.search(query, k, None).expect("Search failed");
     }
     let search_time = start.elapsed();
 
@@ -709,7 +709,7 @@ fn run_search_bench_quantized(db: &QuantizedVectorDb, vectors: &[Vec<f32>], meth
     let start = Instant::now();
     for i in 0..query_count {
         let query = &vectors[i % vectors.len()];
-        let _ = db.search(query, k).expect("Search failed");
+        let _ = db.search(query, k, None).expect("Search failed");
     }
     let search_time = start.elapsed();
 
@@ -736,7 +736,7 @@ fn run_search_bench_persistent(db: &PersistentVectorDb, vectors: &[Vec<f32>], me
     let start = Instant::now();
     for i in 0..query_count {
         let query = &vectors[i % vectors.len()];
-        let _ = db.search(query, k).expect("Search failed");
+        let _ = db.search(query, k, None).expect("Search failed");
     }
     let search_time = start.elapsed();
 
@@ -834,7 +834,7 @@ fn run_comparison(count: usize, dimensions: usize) {
         let query_count = 50;
         let start = Instant::now();
         for i in 0..query_count {
-            let _ = db.search(&vectors[i % vectors.len()], 10);
+            let _ = db.search(&vectors[i % vectors.len()], 10, None);
         }
         let search_time = start.elapsed().as_micros() / query_count as u128;
 
@@ -1085,7 +1085,7 @@ fn run_stress_test(count: usize, dimensions: usize, threads: usize, data_dir: &P
             .par_iter()
             .map(|q| {
                 let q_start = Instant::now();
-                db.search(q, 10).unwrap();
+                db.search(q, 10, None).unwrap();
                 q_start.elapsed().as_secs_f64() * 1000.0
             })
             .collect()
@@ -1139,7 +1139,7 @@ fn measure_db_performance(
     let mut total_hits = 0;
 
     for (i, query) in queries.iter().enumerate() {
-        let results = db.search(query, k).unwrap();
+        let results = db.search(query, k, None).unwrap();
         let result_ids: std::collections::HashSet<String> = results
             .into_iter()
             .map(|(id, _, _)| id.to_string())
@@ -1168,7 +1168,7 @@ fn measure_quantized_db_performance(
     let mut total_hits = 0;
 
     for (i, query) in queries.iter().enumerate() {
-        let results = db.search(query, k).unwrap();
+        let results = db.search(query, k, None).unwrap();
         let result_ids: std::collections::HashSet<String> = results
             .into_iter()
             .map(|(id, _, _)| id.to_string())

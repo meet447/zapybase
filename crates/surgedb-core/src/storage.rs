@@ -25,8 +25,13 @@ pub trait VectorStorageTrait {
     ) -> Option<f32>;
 
     /// Get metadata for a vector
-    fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
+    fn get_metadata(&self, _internal_id: InternalId) -> Option<Value> {
         None
+    }
+
+    /// Check if a vector is deleted
+    fn is_deleted(&self, _internal_id: InternalId) -> bool {
+        false
     }
 }
 
@@ -46,6 +51,9 @@ pub struct VectorStorage {
 
     /// Optional metadata for each vector
     metadata: RwLock<HashMap<InternalId, Value>>,
+
+    /// Set of deleted internal IDs
+    deleted: RwLock<std::collections::HashSet<InternalId>>,
 }
 
 impl VectorStorage {
@@ -57,6 +65,22 @@ impl VectorStorage {
             id_to_internal: RwLock::new(HashMap::new()),
             internal_to_id: RwLock::new(Vec::new()),
             metadata: RwLock::new(HashMap::new()),
+            deleted: RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Delete a vector by ID
+    /// Returns true if the vector existed and was deleted
+    pub fn delete(&self, id: &VectorId) -> Result<bool> {
+        // We don't remove from vectors/internal_to_id to preserve indices for HNSW
+        // Just remove from id_to_internal map and add to deleted set
+        let mut id_to_internal = self.id_to_internal.write();
+
+        if let Some(internal_id) = id_to_internal.remove(id) {
+            self.deleted.write().insert(internal_id);
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 
@@ -263,6 +287,7 @@ impl VectorStorage {
         VectorStorageView {
             guard: self.vectors.read(),
             metadata_guard: self.metadata.read(),
+            deleted_guard: self.deleted.read(),
             dimensions: self.dimensions,
         }
     }
@@ -273,6 +298,7 @@ impl VectorStorage {
 pub struct VectorStorageView<'a> {
     guard: parking_lot::RwLockReadGuard<'a, Vec<f32>>,
     metadata_guard: parking_lot::RwLockReadGuard<'a, HashMap<InternalId, Value>>,
+    deleted_guard: parking_lot::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>,
     dimensions: usize,
 }
 
@@ -305,9 +331,15 @@ impl<'a> VectorStorageTrait for VectorStorageView<'a> {
         }
     }
 
-
     fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
+        if self.deleted_guard.contains(&internal_id) {
+            return None;
+        }
         self.metadata_guard.get(&internal_id).cloned()
+    }
+
+    fn is_deleted(&self, internal_id: InternalId) -> bool {
+        self.deleted_guard.contains(&internal_id)
     }
 }
 
@@ -335,7 +367,14 @@ impl VectorStorageTrait for VectorStorage {
         }
     }
     fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
+        if self.is_deleted(internal_id) {
+            return None;
+        }
         self.get_metadata(internal_id)
+    }
+
+    fn is_deleted(&self, internal_id: InternalId) -> bool {
+        self.deleted.read().contains(&internal_id)
     }
 }
 

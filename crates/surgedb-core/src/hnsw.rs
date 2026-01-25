@@ -8,12 +8,12 @@
 
 use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
+use crate::filter::Filter;
 use crate::storage::VectorStorageTrait;
 use crate::types::InternalId;
 use parking_lot::RwLock;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use crate::filter::Filter;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 
@@ -301,7 +301,8 @@ impl HnswIndex {
             if let Ok(neighbors_by_layer) = &search_results[i] {
                 for (layer, candidates) in neighbors_by_layer.iter().enumerate() {
                     if layer < new_node.neighbors.len() {
-                        new_node.neighbors[layer] = candidates.iter().map(|c: &Candidate| c.id).collect();
+                        new_node.neighbors[layer] =
+                            candidates.iter().map(|c: &Candidate| c.id).collect();
                     }
                 }
             }
@@ -310,25 +311,26 @@ impl HnswIndex {
 
             // Update bidirectional connections
             if let Ok(neighbors_by_layer) = &search_results[i] {
-                 for (layer, candidates) in neighbors_by_layer.iter().enumerate() {
+                for (layer, candidates) in neighbors_by_layer.iter().enumerate() {
                     for neighbor in candidates {
                         let neighbor_idx = neighbor.id.as_usize();
-                        
+
                         if neighbor_idx < nodes.len() {
-                             let neighbor_node = &mut nodes[neighbor_idx];
-                             if neighbor_node.max_layer >= layer {
-                                 neighbor_node.neighbors[layer].push(internal_id);
-                                 
-                                 // Prune connections if needed
-                                 let max_connections = if layer == 0 {
-                                     self.config.m0
-                                 } else {
-                                     self.config.m
-                                 };
-                                 
-                                 if neighbor_node.neighbors[layer].len() > max_connections {
-                                     if let Some(nv) = storage.get_vector_data(neighbor.id) {
-                                         let mut candidates: Vec<Candidate> = neighbor_node.neighbors[layer]
+                            let neighbor_node = &mut nodes[neighbor_idx];
+                            if neighbor_node.max_layer >= layer {
+                                neighbor_node.neighbors[layer].push(internal_id);
+
+                                // Prune connections if needed
+                                let max_connections = if layer == 0 {
+                                    self.config.m0
+                                } else {
+                                    self.config.m
+                                };
+
+                                if neighbor_node.neighbors[layer].len() > max_connections {
+                                    if let Some(nv) = storage.get_vector_data(neighbor.id) {
+                                        let mut candidates: Vec<Candidate> = neighbor_node
+                                            .neighbors[layer]
                                             .iter()
                                             .filter_map(|&n_id| {
                                                 storage
@@ -349,12 +351,12 @@ impl HnswIndex {
                                             .take(max_connections)
                                             .map(|c| c.id)
                                             .collect();
-                                     }
-                                 }
-                             }
+                                    }
+                                }
+                            }
                         }
                     }
-                 }
+                }
             }
 
             // Update entry point
@@ -366,7 +368,6 @@ impl HnswIndex {
 
         Ok(())
     }
-
 
     /// Insert a new vector into the index
     pub fn insert(
@@ -547,16 +548,18 @@ impl HnswIndex {
             distance: entry_dist,
         });
 
-        // Check if entry point matches filter
+        // Check if entry point matches filter and is not deleted
         let entry_matches = if let Some(f) = filter {
-            storage.get_metadata(entry)
+            storage
+                .get_metadata(entry)
                 .map(|m| f.matches(&m))
                 .unwrap_or(false)
         } else {
             true
         };
+        let entry_valid = !storage.is_deleted(entry) && entry_matches;
 
-        if entry_matches {
+        if entry_valid {
             results.push(MaxCandidate {
                 id: entry,
                 distance: entry_dist,
@@ -586,16 +589,19 @@ impl HnswIndex {
                                     distance: dist,
                                 });
 
-                                // Check filter before adding to results
+                                // Check filter and deleted status before adding to results
                                 let matches_filter = if let Some(f) = filter {
-                                    storage.get_metadata(neighbor_id)
+                                    storage
+                                        .get_metadata(neighbor_id)
                                         .map(|m| f.matches(&m))
                                         .unwrap_or(false)
                                 } else {
                                     true
                                 };
+                                let neighbor_valid =
+                                    !storage.is_deleted(neighbor_id) && matches_filter;
 
-                                if matches_filter {
+                                if neighbor_valid {
                                     results.push(MaxCandidate {
                                         id: neighbor_id,
                                         distance: dist,
@@ -840,7 +846,7 @@ mod tests {
 
         // Search for vector similar to [1, 0, 0, 0]
         let query = [1.0, 0.0, 0.0, 0.0];
-        let results = index.search(&query, 3, &storage).unwrap();
+        let results = index.search(&query, 3, &storage, None).unwrap();
 
         assert_eq!(results.len(), 3);
 

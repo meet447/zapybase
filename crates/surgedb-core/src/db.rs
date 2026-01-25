@@ -57,6 +57,14 @@ impl Collection {
         }
     }
 
+    /// Delete a vector by ID
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        match self {
+            Collection::Standard(db) => db.write().delete(id),
+            Collection::Quantized(db) => db.write().delete(id),
+        }
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<(Vec<f32>, Option<Value>)>> {
         match self {
             Collection::Standard(db) => db.read().get(id),
@@ -64,7 +72,12 @@ impl Collection {
         }
     }
 
-    pub fn search(&self, query: &[f32], k: usize, filter: Option<&crate::filter::Filter>) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&crate::filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         match self {
             Collection::Standard(db) => db.read().search(query, k, filter),
             Collection::Quantized(db) => db.read().search(query, k, filter),

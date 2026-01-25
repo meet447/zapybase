@@ -49,6 +49,9 @@ pub struct QuantizedStorage {
 
     /// Optional metadata for each vector
     metadata: RwLock<HashMap<InternalId, Value>>,
+
+    /// Set of deleted internal IDs
+    deleted: RwLock<std::collections::HashSet<InternalId>>,
 }
 
 impl QuantizedStorage {
@@ -85,6 +88,19 @@ impl QuantizedStorage {
             id_to_internal: RwLock::new(HashMap::new()),
             internal_to_id: RwLock::new(Vec::new()),
             metadata: RwLock::new(HashMap::new()),
+            deleted: RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Delete a vector by ID
+    pub fn delete(&self, id: &VectorId) -> Result<bool> {
+        let mut id_to_internal = self.id_to_internal.write();
+
+        if let Some(internal_id) = id_to_internal.remove(id) {
+            self.deleted.write().insert(internal_id);
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 
@@ -478,6 +494,7 @@ impl QuantizedStorage {
             binary_vectors,
             original_vectors,
             metadata: Some(self.metadata.read()),
+            deleted: Some(self.deleted.read()),
         }
     }
 
@@ -548,6 +565,10 @@ impl VectorStorageTrait for QuantizedStorage {
     ) -> Option<f32> {
         self.distance(query, internal_id, metric)
     }
+
+    fn is_deleted(&self, internal_id: InternalId) -> bool {
+        self.deleted.read().contains(&internal_id)
+    }
 }
 
 /// A pre-quantized query vector to avoid reallocation during search
@@ -569,6 +590,7 @@ pub struct QuantizedStorageView<'a> {
     binary_vectors: Option<parking_lot::RwLockReadGuard<'a, Vec<u8>>>,
     original_vectors: Option<parking_lot::RwLockReadGuard<'a, Option<Vec<f32>>>>,
     metadata: Option<parking_lot::RwLockReadGuard<'a, HashMap<InternalId, Value>>>,
+    deleted: Option<parking_lot::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>>,
 }
 
 impl<'a> QuantizedStorageView<'a> {
@@ -698,7 +720,21 @@ impl<'a> VectorStorageTrait for QuantizedStorageView<'a> {
     }
 
     fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
-        self.metadata.as_ref().and_then(|m| m.get(&internal_id).cloned())
+        if let Some(deleted) = &self.deleted {
+            if deleted.contains(&internal_id) {
+                return None;
+            }
+        }
+        self.metadata
+            .as_ref()
+            .and_then(|m| m.get(&internal_id).cloned())
+    }
+
+    fn is_deleted(&self, internal_id: InternalId) -> bool {
+        self.deleted
+            .as_ref()
+            .map(|d| d.contains(&internal_id))
+            .unwrap_or(false)
     }
 }
 

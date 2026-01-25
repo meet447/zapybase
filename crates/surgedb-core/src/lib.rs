@@ -179,6 +179,12 @@ impl VectorDb {
         Ok(())
     }
 
+    /// Delete a vector by ID
+    pub fn delete(&mut self, id: impl Into<VectorId>) -> Result<bool> {
+        let id = id.into();
+        self.storage.delete(&id)
+    }
+
     /// Insert or update a vector with the given ID and optional metadata
     pub fn upsert(
         &mut self,
@@ -382,6 +388,12 @@ impl QuantizedVectorDb {
         }
 
         Ok(())
+    }
+
+    /// Delete a vector by ID
+    pub fn delete(&mut self, id: impl Into<VectorId>) -> Result<bool> {
+        let id = id.into();
+        self.storage.delete(&id)
     }
 
     /// Insert or update a vector with the given ID and optional metadata

@@ -6,7 +6,7 @@ use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
 use crate::hnsw::{HnswConfig, HnswIndex};
 use crate::snapshot::{Snapshot, SnapshotManager};
-use crate::storage::VectorStorage;
+use crate::storage::{VectorStorage, VectorStorageTrait};
 use crate::types::VectorId;
 use crate::wal::{Wal, WalEntry};
 use serde_json::Value;
@@ -138,8 +138,9 @@ impl PersistentVectorDb {
                     }
                 }
                 WalEntry::Delete { id } => {
-                    // TODO: Implement delete in storage/index
-                    let _ = id;
+                    // Apply delete to storage
+                    // We don't need to do anything to index as it uses storage's deleted status
+                    let _ = self.storage.delete(&id);
                 }
                 WalEntry::Checkpoint { .. } => {
                     // Checkpoint markers don't need replay
@@ -148,6 +149,28 @@ impl PersistentVectorDb {
         }
 
         Ok(())
+    }
+
+    /// Delete a vector by ID
+    pub fn delete(&mut self, id: impl Into<VectorId>) -> Result<bool> {
+        let id = id.into();
+
+        // Write to WAL
+        self.wal.append(WalEntry::Delete { id: id.clone() })?;
+
+        if self.config.sync_writes {
+            self.wal.sync()?;
+        }
+
+        // Apply to storage
+        let deleted = self.storage.delete(&id)?;
+
+        // Checkpoint if needed
+        if self.wal.needs_checkpoint() {
+            self.checkpoint()?;
+        }
+
+        Ok(deleted)
     }
 
     /// Insert a vector with the given ID and optional metadata
@@ -190,7 +213,12 @@ impl PersistentVectorDb {
     }
 
     /// Search for the k nearest neighbors
-    pub fn search(&self, query: &[f32], k: usize, filter: Option<&crate::filter::Filter>) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&crate::filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -226,6 +254,11 @@ impl PersistentVectorDb {
 
         // Add all vectors to snapshot
         for internal_id in self.storage.all_internal_ids() {
+            // Skip deleted vectors
+            if self.storage.is_deleted(internal_id) {
+                continue;
+            }
+
             if let Some(ext_id) = self.storage.get_external_id(internal_id) {
                 if let Some(vector) = self.storage.get(internal_id) {
                     let metadata = self.storage.get_metadata(internal_id);
