@@ -104,6 +104,30 @@ surgedb-core = { git = "https://github.com/meet447/surgedb" }
 
 ---
 
+## Quick Start (WASM / Browser)
+
+SurgeDB runs entirely in the browser using WebAssembly.
+
+```javascript
+import init, { SurgeDB } from './pkg/surgedb_wasm.js';
+
+async function run() {
+    await init();
+    
+    // 1. Create DB
+    const db = new SurgeDB(384);
+    
+    // 2. Insert
+    db.insert("doc_1", new Float32Array([0.1, ...]), { title: "Hello" });
+    
+    // 3. Search
+    const results = db.search(new Float32Array([0.1, ...]), 5);
+    console.log(results);
+}
+```
+
+---
+
 ## Quick Start (Rust)
 
 ```rust
@@ -240,6 +264,8 @@ cargo run --release -- persist
 
 ## Roadmap
 
+See [ROADMAP.md](./ROADMAP.md) for the detailed path to production.
+
 * [x] SIMD Distance Kernels (NEON/AVX)
 * [x] HNSW Algorithm
 * [x] SQ8 & Binary Quantization
@@ -249,7 +275,7 @@ cargo run --release -- persist
 * [x] Metadata Filtering (Exact, And, Or, Not)
 * [x] HTTP Server (Axum)
 * [x] UniFFI Bindings (Python, Swift, Kotlin)
-* [x] WASM / Browser Support (Edge) - **NEW!**
+* [x] WASM / Browser Support (Edge)
 * [ ] Zero-Config RAG Pipeline (Candle Integration)
 
 ## License
