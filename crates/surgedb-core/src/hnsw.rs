@@ -10,8 +10,9 @@ use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
 use crate::filter::Filter;
 use crate::storage::VectorStorageTrait;
+use crate::sync::RwLock;
 use crate::types::InternalId;
-use parking_lot::RwLock;
+#[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -195,12 +196,20 @@ impl HnswIndex {
 
     /// Generate a random level for a new node
     fn random_level(&self) -> usize {
-        let mut rng = rand::thread_rng();
-        let r: f64 = rng.gen();
+        #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+        let r = js_sys::Math::random();
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
+        let r: f64 = {
+            let mut rng = rand::thread_rng();
+            rng.gen()
+        };
+
         (-r.ln() * self.config.ml).floor() as usize
     }
 
     /// Insert multiple vectors in a batch
+    #[cfg(feature = "parallel")]
     pub fn insert_batch(
         &self,
         items: &[(InternalId, &[f32])],
@@ -366,6 +375,20 @@ impl HnswIndex {
             }
         }
 
+        Ok(())
+    }
+
+    /// Insert multiple vectors in a batch (sequential version for WASM)
+    #[cfg(not(feature = "parallel"))]
+    pub fn insert_batch(
+        &self,
+        items: &[(InternalId, &[f32])],
+        storage: &impl VectorStorageTrait,
+    ) -> Result<()> {
+        // Sequential fallback: just call insert for each item
+        for &(internal_id, vector) in items {
+            self.insert(internal_id, vector, storage)?;
+        }
         Ok(())
     }
 

@@ -6,7 +6,7 @@
 //! - SIMD-accelerated distance calculations (NEON/AVX-512)
 //! - Adaptive HNSW indexing (In-Memory, Mmap, Hybrid)
 //! - Built-in quantization (SQ8, Binary)
-//! - ACID-compliant persistence
+//! - ACID-compliant persistence (native only, not WASM)
 //!
 //! # Quick Start
 //! ```rust,no_run
@@ -19,7 +19,7 @@
 //! db.insert("vec1", &[0.1, 0.2, 0.3, 0.4], None).unwrap();
 //!
 //! // Search for similar vectors
-//! let results = db.search(&[0.1, 0.2, 0.3, 0.4], 10).unwrap();
+//! let results = db.search(&[0.1, 0.2, 0.3, 0.4], 10, None).unwrap();
 //! ```
 //!
 //! # Quantized Database (4x memory reduction)
@@ -37,7 +37,7 @@
 //! db.insert("vec1", &[0.1, 0.2, 0.3, 0.4], None).unwrap();
 //! ```
 //!
-//! # Persistent Database (with crash recovery)
+//! # Persistent Database (with crash recovery) - Native only
 //! ```rust,no_run
 //! use surgedb_core::{PersistentVectorDb, PersistentConfig};
 //!
@@ -48,35 +48,55 @@
 //! db.checkpoint().unwrap(); // Create a snapshot
 //! ```
 
-pub mod db;
+// Core modules (always available)
 pub mod distance;
 pub mod error;
 pub mod filter;
 pub mod hnsw;
-pub mod mmap_db;
-pub mod mmap_storage;
-pub mod persistent;
 pub mod quantization;
 pub mod quantized_storage;
-pub mod snapshot;
 pub mod storage;
+pub mod sync;
 pub mod types;
+
+// Persistence modules (native only, requires filesystem)
+#[cfg(feature = "persistence")]
+pub mod mmap_db;
+#[cfg(feature = "persistence")]
+pub mod mmap_storage;
+#[cfg(feature = "persistence")]
+pub mod persistent;
+#[cfg(feature = "persistence")]
+pub mod snapshot;
+#[cfg(feature = "persistence")]
 pub mod wal;
 
-// Re-exports
-pub use db::{Database, DatabaseStats};
+// Multi-collection database (uses persistence features conditionally)
+pub mod db;
+
+// Re-exports - Core (always available)
 pub use distance::DistanceMetric;
 pub use error::{Error, Result};
 pub use hnsw::{HnswConfig, HnswIndex};
-pub use mmap_db::{MmapConfig, MmapVectorDb};
-pub use mmap_storage::MmapStorage;
-pub use persistent::{PersistentConfig, PersistentVectorDb};
 pub use quantization::{BinaryQuantizer, QuantizationType, SQ8Quantizer};
 pub use quantized_storage::QuantizedStorage;
-pub use snapshot::{Snapshot, SnapshotManager};
 pub use storage::{VectorStorage, VectorStorageTrait};
 pub use types::{Vector, VectorId};
+
+// Re-exports - Persistence (native only)
+#[cfg(feature = "persistence")]
+pub use mmap_db::{MmapConfig, MmapVectorDb};
+#[cfg(feature = "persistence")]
+pub use mmap_storage::MmapStorage;
+#[cfg(feature = "persistence")]
+pub use persistent::{PersistentConfig, PersistentVectorDb};
+#[cfg(feature = "persistence")]
+pub use snapshot::{Snapshot, SnapshotManager};
+#[cfg(feature = "persistence")]
 pub use wal::{Wal, WalEntry};
+
+// Re-exports - Database (conditional based on features)
+pub use db::{Database, DatabaseStats};
 
 /// Main database configuration (unquantized)
 #[derive(Debug, Clone)]
@@ -208,10 +228,7 @@ impl VectorDb {
     }
 
     /// Batch insert/upsert vectors
-    pub fn upsert_batch(
-        &mut self,
-        items: Vec<(VectorId, Vec<f32>, Option<Value>)>,
-    ) -> Result<()> {
+    pub fn upsert_batch(&mut self, items: Vec<(VectorId, Vec<f32>, Option<Value>)>) -> Result<()> {
         if items.is_empty() {
             return Ok(());
         }
@@ -277,7 +294,12 @@ impl VectorDb {
     }
 
     /// Search for the k nearest neighbors
-    pub fn search(&self, query: &[f32], k: usize, filter: Option<&filter::Filter>) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -288,7 +310,9 @@ impl VectorDb {
         // We search for more candidates (2x k) to account for potential stale/deleted entries
         // that might be filtered out.
         let search_k = k * 2;
-        let results = self.index.search(query, search_k, &self.storage.view(), filter)?;
+        let results = self
+            .index
+            .search(query, search_k, &self.storage.view(), filter)?;
 
         // Map internal IDs back to external IDs and fetch metadata
         // Filter out stale entries (where internal_id doesn't match current mapping)
@@ -422,10 +446,7 @@ impl QuantizedVectorDb {
     }
 
     /// Batch insert/upsert vectors
-    pub fn upsert_batch(
-        &mut self,
-        items: Vec<(VectorId, Vec<f32>, Option<Value>)>,
-    ) -> Result<()> {
+    pub fn upsert_batch(&mut self, items: Vec<(VectorId, Vec<f32>, Option<Value>)>) -> Result<()> {
         if items.is_empty() {
             return Ok(());
         }
@@ -490,7 +511,12 @@ impl QuantizedVectorDb {
     }
 
     /// Search for the k nearest neighbors
-    pub fn search(&self, query: &[f32], k: usize, filter: Option<&filter::Filter>) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32, Option<Value>)>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -529,11 +555,11 @@ impl QuantizedVectorDb {
                 .into_iter()
                 .filter(|&id| {
                     if let Some(f) = filter {
-                         if let Some(meta) = self.storage.get_metadata(id) {
-                             f.matches(&meta)
-                         } else {
-                             false
-                         }
+                        if let Some(meta) = self.storage.get_metadata(id) {
+                            f.matches(&meta)
+                        } else {
+                            false
+                        }
                     } else {
                         true
                     }

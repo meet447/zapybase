@@ -248,8 +248,8 @@ cargo run --release -- persist
 * [x] Collections & Metadata Support
 * [x] Metadata Filtering (Exact, And, Or, Not)
 * [x] HTTP Server (Axum)
-* [x] UniFFI Bindings (Python, Swift, Kotlin) - **NEW!**
-* [ ] WASM / Browser Support (Edge)
+* [x] UniFFI Bindings (Python, Swift, Kotlin)
+* [x] WASM / Browser Support (Edge) - **NEW!**
 * [ ] Zero-Config RAG Pipeline (Candle Integration)
 
 ## License

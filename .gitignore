@@ -24,3 +24,6 @@ crates/surgedb-bindings/python/*.so
 crates/surgedb-bindings/python/surgedb.py
 __pycache__/
 *.pyc
+
+# WASM bindings - generated artifacts
+crates/surgedb-wasm/pkg/

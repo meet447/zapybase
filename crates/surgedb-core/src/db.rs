@@ -1,8 +1,8 @@
+use crate::sync::RwLock;
 use crate::types::VectorId;
 use crate::{
     Config, Error, QuantizationType, QuantizedConfig, QuantizedVectorDb, Result, VectorDb,
 };
-use parking_lot::RwLock;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;

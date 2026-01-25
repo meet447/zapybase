@@ -4,8 +4,8 @@
 
 use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
+use crate::sync::RwLock;
 use crate::types::{InternalId, VectorId};
-use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -296,9 +296,9 @@ impl VectorStorage {
 /// A view into VectorStorage that holds a read lock on the data
 /// This avoids repeated locking during search
 pub struct VectorStorageView<'a> {
-    guard: parking_lot::RwLockReadGuard<'a, Vec<f32>>,
-    metadata_guard: parking_lot::RwLockReadGuard<'a, HashMap<InternalId, Value>>,
-    deleted_guard: parking_lot::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>,
+    guard: crate::sync::RwLockReadGuard<'a, Vec<f32>>,
+    metadata_guard: crate::sync::RwLockReadGuard<'a, HashMap<InternalId, Value>>,
+    deleted_guard: crate::sync::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>,
     dimensions: usize,
 }
 

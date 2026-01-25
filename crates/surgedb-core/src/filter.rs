@@ -46,7 +46,7 @@ fn get_value_by_path<'a>(metadata: &'a Value, path: &str) -> Option<&'a Value> {
     if path.is_empty() {
         return Some(metadata);
     }
-    
+
     let mut current = metadata;
     for part in path.split('.') {
         match current {
@@ -110,8 +110,8 @@ mod tests {
             Filter::Exact("public".to_string(), json!(true)),
             Filter::Or(vec![
                 Filter::Exact("tags.0".to_string(), json!("ai")), // crude array access check
-                Filter::Exact("category".to_string(), json!("something_else"))
-            ])
+                Filter::Exact("category".to_string(), json!("something_else")),
+            ]),
         ]);
 
         assert!(filter.matches(&meta));

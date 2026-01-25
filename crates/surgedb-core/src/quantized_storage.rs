@@ -6,8 +6,8 @@ use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
 use crate::quantization::{BinaryQuantizer, QuantizationType, SQ8Metadata, SQ8Quantizer};
 use crate::storage::VectorStorageTrait;
+use crate::sync::RwLock;
 use crate::types::{InternalId, VectorId};
-use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -585,12 +585,12 @@ pub struct QuantizedStorageView<'a> {
     quantization: QuantizationType,
     sq8_quantizer: Option<&'a SQ8Quantizer>,
     binary_quantizer: Option<&'a BinaryQuantizer>,
-    sq8_vectors: Option<parking_lot::RwLockReadGuard<'a, Vec<u8>>>,
-    sq8_metadata: Option<parking_lot::RwLockReadGuard<'a, Vec<SQ8Metadata>>>,
-    binary_vectors: Option<parking_lot::RwLockReadGuard<'a, Vec<u8>>>,
-    original_vectors: Option<parking_lot::RwLockReadGuard<'a, Option<Vec<f32>>>>,
-    metadata: Option<parking_lot::RwLockReadGuard<'a, HashMap<InternalId, Value>>>,
-    deleted: Option<parking_lot::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>>,
+    sq8_vectors: Option<crate::sync::RwLockReadGuard<'a, Vec<u8>>>,
+    sq8_metadata: Option<crate::sync::RwLockReadGuard<'a, Vec<SQ8Metadata>>>,
+    binary_vectors: Option<crate::sync::RwLockReadGuard<'a, Vec<u8>>>,
+    original_vectors: Option<crate::sync::RwLockReadGuard<'a, Option<Vec<f32>>>>,
+    metadata: Option<crate::sync::RwLockReadGuard<'a, HashMap<InternalId, Value>>>,
+    deleted: Option<crate::sync::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>>,
 }
 
 impl<'a> QuantizedStorageView<'a> {

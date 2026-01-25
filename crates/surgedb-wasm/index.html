@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SurgeDB WASM Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #00d4ff; }
+        .card {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-weight: bold;
+        }
+        button:hover { background: #00a8cc; }
+        pre {
+            background: #0f0f23;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .stats { color: #00d4ff; }
+        #output { min-height: 200px; }
+    </style>
+</head>
+<body>
+    <h1>SurgeDB WASM Demo</h1>
+    <p>High-performance vector search running entirely in your browser.</p>
+    
+    <div class="card">
+        <h2>Controls</h2>
+        <button onclick="runDemo()">Run Demo</button>
+        <button onclick="runBenchmark()">Run Benchmark (1000 vectors)</button>
+        <button onclick="clearOutput()">Clear</button>
+    </div>
+    
+    <div class="card">
+        <h2>Output</h2>
+        <pre id="output">Click "Run Demo" to start...</pre>
+    </div>
+    
+    <div class="card">
+        <h2>Stats</h2>
+        <pre id="stats" class="stats">-</pre>
+    </div>
+
+    <script type="module">
+        import init, { SurgeDB, SurgeDBQuantized, version, log } from './pkg/surgedb_wasm.js';
+        
+        let db = null;
+        
+        window.log = (msg) => {
+            const output = document.getElementById('output');
+            output.textContent += msg + '\n';
+            console.log(msg);
+        };
+        
+        window.clearOutput = () => {
+            document.getElementById('output').textContent = '';
+            document.getElementById('stats').textContent = '-';
+        };
+        
+        window.updateStats = () => {
+            if (db) {
+                const stats = db.stats();
+                document.getElementById('stats').textContent = JSON.stringify(stats, null, 2);
+            }
+        };
+        
+        // Generate a random vector
+        function randomVector(dim) {
+            const vec = new Float32Array(dim);
+            for (let i = 0; i < dim; i++) {
+                vec[i] = Math.random() * 2 - 1;
+            }
+            // Normalize
+            let norm = 0;
+            for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
+            norm = Math.sqrt(norm);
+            for (let i = 0; i < dim; i++) vec[i] /= norm;
+            return vec;
+        }
+        
+        window.runDemo = async () => {
+            clearOutput();
+            
+            try {
+                await init();
+                log(`SurgeDB Version: ${version()}`);
+                log('');
+                
+                // Create database
+                const dimensions = 384;
+                db = new SurgeDB(dimensions);
+                log(`Created database with ${dimensions} dimensions`);
+                
+                // Insert some vectors
+                const categories = ['tech', 'science', 'art', 'music'];
+                for (let i = 0; i < 100; i++) {
+                    const vec = randomVector(dimensions);
+                    const metadata = { 
+                        id: i, 
+                        category: categories[i % categories.length],
+                        title: `Document ${i}`
+                    };
+                    db.insert(`doc_${i}`, vec, metadata);
+                }
+                log(`Inserted 100 vectors`);
+                updateStats();
+                
+                // Search
+                const query = randomVector(dimensions);
+                const start = performance.now();
+                const results = db.search(query, 5);
+                const elapsed = performance.now() - start;
+                
+                log('');
+                log(`Search completed in ${elapsed.toFixed(2)}ms`);
+                log('');
+                log('Top 5 results:');
+                for (const result of results) {
+                    log(`  ${result.id}: score=${result.score.toFixed(4)}, category=${result.metadata?.category}`);
+                }
+                
+                log('');
+                log('Demo complete!');
+                
+            } catch (err) {
+                log(`Error: ${err}`);
+            }
+        };
+        
+        window.runBenchmark = async () => {
+            clearOutput();
+            
+            try {
+                await init();
+                log('Starting benchmark...');
+                log('');
+                
+                const dimensions = 384;
+                const numVectors = 1000;
+                const numQueries = 100;
+                
+                // Test standard database
+                log('=== Standard Database ===');
+                let db = new SurgeDB(dimensions);
+                
+                // Insert benchmark
+                let start = performance.now();
+                for (let i = 0; i < numVectors; i++) {
+                    db.insert(`vec_${i}`, randomVector(dimensions), { id: i });
+                }
+                let insertTime = performance.now() - start;
+                log(`Insert ${numVectors} vectors: ${insertTime.toFixed(2)}ms (${(numVectors / insertTime * 1000).toFixed(0)} vec/s)`);
+                
+                // Search benchmark
+                start = performance.now();
+                for (let i = 0; i < numQueries; i++) {
+                    db.search(randomVector(dimensions), 10);
+                }
+                let searchTime = performance.now() - start;
+                log(`Search ${numQueries} queries: ${searchTime.toFixed(2)}ms (${(searchTime / numQueries).toFixed(2)}ms/query)`);
+                
+                let stats = db.stats();
+                log(`Memory usage: ${(stats.memory_usage_bytes / 1024).toFixed(2)} KB`);
+                
+                db.free();
+                
+                // Test quantized database
+                log('');
+                log('=== Quantized Database (SQ8) ===');
+                let qdb = new SurgeDBQuantized(dimensions);
+                
+                start = performance.now();
+                for (let i = 0; i < numVectors; i++) {
+                    qdb.insert(`vec_${i}`, randomVector(dimensions), { id: i });
+                }
+                insertTime = performance.now() - start;
+                log(`Insert ${numVectors} vectors: ${insertTime.toFixed(2)}ms`);
+                
+                start = performance.now();
+                for (let i = 0; i < numQueries; i++) {
+                    qdb.search(randomVector(dimensions), 10);
+                }
+                searchTime = performance.now() - start;
+                log(`Search ${numQueries} queries: ${searchTime.toFixed(2)}ms (${(searchTime / numQueries).toFixed(2)}ms/query)`);
+                
+                stats = qdb.stats();
+                log(`Memory usage: ${(stats.memory_usage_bytes / 1024).toFixed(2)} KB`);
+                log(`Compression ratio: ${qdb.compressionRatio().toFixed(2)}x`);
+                
+                qdb.free();
+                
+                log('');
+                log('Benchmark complete!');
+                
+            } catch (err) {
+                log(`Error: ${err}`);
+            }
+        };
+    </script>
+</body>
+</html>
