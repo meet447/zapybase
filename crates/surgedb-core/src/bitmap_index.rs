@@ -157,6 +157,11 @@ impl BitmapIndex {
                 // For now, return None to fallback to scan-based filtering for NOT.
                 None
             }
+            Filter::Range { .. } | Filter::GeoRadius { .. } => {
+                // Range queries on bitmaps require range-encoded bitmaps or B-trees.
+                // Fallback to scan for now.
+                None
+            }
         }
     }
 }

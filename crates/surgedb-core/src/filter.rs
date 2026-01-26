@@ -14,6 +14,20 @@ pub enum Filter {
     Or(Vec<Filter>),
     /// Logical NOT
     Not(Box<Filter>),
+    /// Range filter for numeric values
+    Range {
+        field: String,
+        gt: Option<f64>,
+        gte: Option<f64>,
+        lt: Option<f64>,
+        lte: Option<f64>,
+    },
+    /// Geo-spatial radius filter (Haversine distance)
+    GeoRadius {
+        field: String,
+        center: (f64, f64),
+        radius_meters: f64,
+    },
 }
 
 impl Filter {
@@ -37,8 +51,89 @@ impl Filter {
             Filter::And(filters) => filters.iter().all(|f| f.matches(metadata)),
             Filter::Or(filters) => filters.iter().any(|f| f.matches(metadata)),
             Filter::Not(filter) => !filter.matches(metadata),
+            Filter::Range {
+                field,
+                gt,
+                gte,
+                lt,
+                lte,
+            } => {
+                if let Some(value) = get_value_by_path(metadata, field) {
+                    if let Some(num) = value.as_f64() {
+                        if let Some(limit) = gt {
+                            if !(num > *limit) {
+                                return false;
+                            }
+                        }
+                        if let Some(limit) = gte {
+                            if !(num >= *limit) {
+                                return false;
+                            }
+                        }
+                        if let Some(limit) = lt {
+                            if !(num < *limit) {
+                                return false;
+                            }
+                        }
+                        if let Some(limit) = lte {
+                            if !(num <= *limit) {
+                                return false;
+                            }
+                        }
+                        true
+                    } else {
+                        false // Not a number
+                    }
+                } else {
+                    false // Field missing
+                }
+            }
+            Filter::GeoRadius {
+                field,
+                center,
+                radius_meters,
+            } => {
+                if let Some(value) = get_value_by_path(metadata, field) {
+                    // Expecting { "lat": 1.0, "lon": 2.0 } or [lat, lon]
+                    let point = parse_geo_point(value);
+                    if let Some((lat, lon)) = point {
+                        let dist = haversine_distance(center.0, center.1, lat, lon);
+                        dist <= *radius_meters
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
         }
     }
+}
+
+fn parse_geo_point(value: &Value) -> Option<(f64, f64)> {
+    match value {
+        Value::Object(map) => {
+            let lat = map.get("lat").or_else(|| map.get("latitude"))?.as_f64()?;
+            let lon = map.get("lon").or_else(|| map.get("longitude"))?.as_f64()?;
+            Some((lat, lon))
+        }
+        Value::Array(arr) if arr.len() == 2 => {
+            let lat = arr[0].as_f64()?;
+            let lon = arr[1].as_f64()?;
+            Some((lat, lon))
+        }
+        _ => None,
+    }
+}
+
+fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    const R: f64 = 6371000.0; // Earth radius in meters
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lon = (lon2 - lon1).to_radians();
+    let a = (d_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    R * c
 }
 
 /// Helper to get a value from a JSON object using a dot-notation path
