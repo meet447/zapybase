@@ -49,10 +49,12 @@
 //! ```
 
 // Core modules (always available)
+pub mod bitmap_index;
 pub mod distance;
 pub mod error;
 pub mod filter;
 pub mod hnsw;
+pub mod pq;
 pub mod quantization;
 pub mod quantized_storage;
 pub mod storage;
@@ -60,6 +62,8 @@ pub mod sync;
 pub mod types;
 
 // Persistence modules (native only, requires filesystem)
+#[cfg(feature = "persistence")]
+pub mod diskann;
 #[cfg(feature = "persistence")]
 pub mod mmap_db;
 #[cfg(feature = "persistence")]

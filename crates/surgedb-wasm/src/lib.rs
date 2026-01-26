@@ -506,6 +506,12 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Check if SIMD acceleration is enabled in this build
+#[wasm_bindgen(js_name = hasSimd)]
+pub fn has_simd() -> bool {
+    cfg!(all(target_arch = "wasm32", target_feature = "simd128"))
+}
+
 /// Log a message to the browser console
 #[wasm_bindgen]
 pub fn log(message: &str) {

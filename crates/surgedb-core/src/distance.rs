@@ -53,9 +53,15 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         cosine_distance_scalar(a, b)
     }
 
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        cosine_distance_wasm(a, b)
+    }
+
     #[cfg(all(
         feature = "simd",
-        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+        not(any(target_arch = "aarch64", target_arch = "x86_64")),
+        not(all(target_arch = "wasm32", target_feature = "simd128"))
     ))]
     {
         cosine_distance_scalar(a, b)
@@ -75,6 +81,11 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         euclidean_distance_avx(a, b)
     }
 
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        euclidean_distance_wasm(a, b)
+    }
+
     #[cfg(not(feature = "simd"))]
     {
         euclidean_distance_scalar(a, b)
@@ -82,7 +93,8 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(all(
         feature = "simd",
-        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+        not(any(target_arch = "aarch64", target_arch = "x86_64")),
+        not(all(target_arch = "wasm32", target_feature = "simd128"))
     ))]
     {
         euclidean_distance_scalar(a, b)
@@ -102,6 +114,11 @@ pub fn dot_product_distance(a: &[f32], b: &[f32]) -> f32 {
         1.0 - dot_product_avx(a, b)
     }
 
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        1.0 - dot_product_wasm(a, b)
+    }
+
     #[cfg(not(feature = "simd"))]
     {
         1.0 - dot_product_scalar(a, b)
@@ -109,7 +126,8 @@ pub fn dot_product_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(all(
         feature = "simd",
-        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+        not(any(target_arch = "aarch64", target_arch = "x86_64")),
+        not(all(target_arch = "wasm32", target_feature = "simd128"))
     ))]
     {
         1.0 - dot_product_scalar(a, b)
@@ -441,6 +459,140 @@ unsafe fn dot_product_avx_inner(a: &[f32], b: &[f32]) -> f32 {
 
     // Handle remainder
     for i in (chunks * 8)..n {
+        sum += a[i] * b[i];
+    }
+
+    sum
+}
+
+// =============================================================================
+// WASM SIMD128 implementations
+// =============================================================================
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn cosine_distance_wasm(a: &[f32], b: &[f32]) -> f32 {
+    use core::arch::wasm32::*;
+
+    debug_assert_eq!(a.len(), b.len());
+
+    let n = a.len();
+    let chunks = n / 4;
+
+    // Accumulators
+    let mut dot_acc = f32x4_splat(0.0);
+    let mut norm_a_acc = f32x4_splat(0.0);
+    let mut norm_b_acc = f32x4_splat(0.0);
+
+    for i in 0..chunks {
+        let offset = i * 4;
+        let va = unsafe { v128_load(a.as_ptr().add(offset) as *const v128) };
+        let vb = unsafe { v128_load(b.as_ptr().add(offset) as *const v128) };
+
+        dot_acc = f32x4_add(dot_acc, f32x4_mul(va, vb));
+        norm_a_acc = f32x4_add(norm_a_acc, f32x4_mul(va, va));
+        norm_b_acc = f32x4_add(norm_b_acc, f32x4_mul(vb, vb));
+    }
+
+    // Horizontal sum
+    let dot = f32x4_extract_lane::<0>(dot_acc)
+        + f32x4_extract_lane::<1>(dot_acc)
+        + f32x4_extract_lane::<2>(dot_acc)
+        + f32x4_extract_lane::<3>(dot_acc);
+    let norm_a = f32x4_extract_lane::<0>(norm_a_acc)
+        + f32x4_extract_lane::<1>(norm_a_acc)
+        + f32x4_extract_lane::<2>(norm_a_acc)
+        + f32x4_extract_lane::<3>(norm_a_acc);
+    let norm_b = f32x4_extract_lane::<0>(norm_b_acc)
+        + f32x4_extract_lane::<1>(norm_b_acc)
+        + f32x4_extract_lane::<2>(norm_b_acc)
+        + f32x4_extract_lane::<3>(norm_b_acc);
+
+    // Handle remainder
+    let mut dot_rem = 0.0f32;
+    let mut norm_a_rem = 0.0f32;
+    let mut norm_b_rem = 0.0f32;
+
+    for i in (chunks * 4)..n {
+        dot_rem += a[i] * b[i];
+        norm_a_rem += a[i] * a[i];
+        norm_b_rem += b[i] * b[i];
+    }
+
+    let total_dot = dot + dot_rem;
+    let total_norm_a = norm_a + norm_a_rem;
+    let total_norm_b = norm_b + norm_b_rem;
+
+    let denom = (total_norm_a * total_norm_b).sqrt();
+    if denom == 0.0 {
+        return 1.0;
+    }
+
+    1.0 - (total_dot / denom)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn euclidean_distance_wasm(a: &[f32], b: &[f32]) -> f32 {
+    use core::arch::wasm32::*;
+
+    debug_assert_eq!(a.len(), b.len());
+
+    let n = a.len();
+    let chunks = n / 4;
+
+    let mut sum_acc = f32x4_splat(0.0);
+
+    for i in 0..chunks {
+        let offset = i * 4;
+        let va = unsafe { v128_load(a.as_ptr().add(offset) as *const v128) };
+        let vb = unsafe { v128_load(b.as_ptr().add(offset) as *const v128) };
+
+        let diff = f32x4_sub(va, vb);
+        sum_acc = f32x4_add(sum_acc, f32x4_mul(diff, diff));
+    }
+
+    let mut sum = f32x4_extract_lane::<0>(sum_acc)
+        + f32x4_extract_lane::<1>(sum_acc)
+        + f32x4_extract_lane::<2>(sum_acc)
+        + f32x4_extract_lane::<3>(sum_acc);
+
+    // Handle remainder
+    for i in (chunks * 4)..n {
+        let diff = a[i] - b[i];
+        sum += diff * diff;
+    }
+
+    sum.sqrt()
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn dot_product_wasm(a: &[f32], b: &[f32]) -> f32 {
+    use core::arch::wasm32::*;
+
+    debug_assert_eq!(a.len(), b.len());
+
+    let n = a.len();
+    let chunks = n / 4;
+
+    let mut acc = f32x4_splat(0.0);
+
+    for i in 0..chunks {
+        let offset = i * 4;
+        let va = unsafe { v128_load(a.as_ptr().add(offset) as *const v128) };
+        let vb = unsafe { v128_load(b.as_ptr().add(offset) as *const v128) };
+
+        acc = f32x4_add(acc, f32x4_mul(va, vb));
+    }
+
+    let mut sum = f32x4_extract_lane::<0>(acc)
+        + f32x4_extract_lane::<1>(acc)
+        + f32x4_extract_lane::<2>(acc)
+        + f32x4_extract_lane::<3>(acc);
+
+    // Handle remainder
+    for i in (chunks * 4)..n {
         sum += a[i] * b[i];
     }
 
