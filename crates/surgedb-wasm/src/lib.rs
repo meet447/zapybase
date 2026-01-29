@@ -228,10 +228,20 @@ impl SurgeDB {
         vector: Vec<f32>,
         metadata: JsValue,
     ) -> Result<(), JsValue> {
+        // Debug logging
+        web_sys::console::log_2(&"Inserting metadata:".into(), &metadata);
+
         let meta = if metadata.is_undefined() || metadata.is_null() {
             None
         } else {
-            Some(serde_wasm_bindgen::from_value(metadata)?)
+            let parsed: serde_json::Value = serde_wasm_bindgen::from_value(metadata.clone())
+                .map_err(|e| JsValue::from_str(&format!("Metadata parse error: {}", e)))?;
+            
+            // Log what we parsed
+            let s = serde_json::to_string(&parsed).unwrap_or_default();
+            web_sys::console::log_1(&format!("Parsed metadata: {}", s).into());
+            
+            Some(parsed)
         };
 
         self.inner
@@ -312,14 +322,22 @@ impl SurgeDB {
 
         let search_results: Vec<SearchResult> = results
             .into_iter()
-            .map(|(id, score, metadata)| SearchResult {
-                id: id.to_string(),
-                score,
-                metadata,
+            .map(|(id, score, metadata)| {
+                // Debug log removed
+                SearchResult {
+                    id: id.to_string(),
+                    score,
+                    metadata,
+                }
             })
             .collect();
 
-        serde_wasm_bindgen::to_value(&search_results).map_err(|e| JsValue::from_str(&e.to_string()))
+        // Configure serializer to convert Maps to plain Objects (fixes JSON.stringify issue)
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        
+        // We use serialize(&serializer) instead of to_value
+        use serde::Serialize;
+        search_results.serialize(&serializer).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Get the number of vectors in the database

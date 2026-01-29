@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,7 +16,7 @@
             --accent: #ff0055;
             --border: #2a2b3d;
         }
-        
+
         body {
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
             background: var(--bg);
@@ -37,7 +38,7 @@
             align-items: center;
             gap: 10px;
         }
-        
+
         .badge {
             font-size: 0.8rem;
             background: var(--primary-dim);
@@ -139,8 +140,10 @@
             padding: 5px 0;
             border-bottom: 1px solid var(--border);
         }
-        
-        .stat-label { color: #888; }
+
+        .stat-label {
+            color: #888;
+        }
 
         .main-content {
             display: flex;
@@ -161,11 +164,25 @@
             white-space: pre-wrap;
         }
 
-        .log-entry { margin-bottom: 5px; }
-        .log-info { color: #888; }
-        .log-success { color: var(--success); }
-        .log-error { color: var(--accent); }
-        .log-data { color: var(--primary); }
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        .log-info {
+            color: #888;
+        }
+
+        .log-success {
+            color: var(--success);
+        }
+
+        .log-error {
+            color: var(--accent);
+        }
+
+        .log-data {
+            color: var(--primary);
+        }
 
         table {
             width: 100%;
@@ -173,28 +190,45 @@
             margin-top: 10px;
             font-size: 0.85rem;
         }
-        
-        th, td {
+
+        th,
+        td {
             text-align: left;
             padding: 8px;
             border-bottom: 1px solid var(--border);
         }
-        
-        th { color: var(--primary); }
+
+        th {
+            color: var(--primary);
+        }
 
         /* Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: var(--bg); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary);
+        }
     </style>
 </head>
+
 <body>
     <h1>
         SurgeDB <span class="badge">WASM</span>
-        <span id="status" class="badge" style="margin-left: auto; border-color: var(--success); color: var(--success);">READY</span>
+        <span id="status" class="badge"
+            style="margin-left: auto; border-color: var(--success); color: var(--success);">READY</span>
     </h1>
-    
+
     <div class="container">
         <div class="sidebar">
             <div class="card">
@@ -235,25 +269,25 @@
 
     <script type="module">
         import init, { SurgeDB, SurgeDBQuantized, version } from './pkg/surgedb_wasm.js';
-        
+
         let db = null;
         const DIMENSIONS = 384;
-        
+
         // UI Helpers
         const el = (id) => document.getElementById(id);
         const setStatus = (msg) => el('status').textContent = msg;
-        
+
         function log(msg, type = 'info') {
             const output = el('output');
             const div = document.createElement('div');
             div.className = `log-entry log-${type}`;
-            
+
             if (typeof msg === 'object') {
                 // If it's a table data (array of objects)
                 if (Array.isArray(msg) && msg.length > 0) {
                     const table = document.createElement('table');
                     const headers = Object.keys(msg[0]);
-                    
+
                     // Header
                     const trH = document.createElement('tr');
                     headers.forEach(h => {
@@ -262,7 +296,7 @@
                         trH.appendChild(th);
                     });
                     table.appendChild(trH);
-                    
+
                     // Rows
                     msg.forEach(row => {
                         const tr = document.createElement('tr');
@@ -283,13 +317,13 @@
             } else {
                 div.innerHTML = `> ${msg}`;
             }
-            
+
             output.appendChild(div);
             output.scrollTop = output.scrollHeight;
         }
-        
+
         window.clearOutput = () => el('output').innerHTML = '';
-        
+
         function updateStats() {
             if (!db) return;
             const s = db.stats();
@@ -299,7 +333,7 @@
                 <div class="stat-row"><span class="stat-label">Memory</span><span>${(s.memory_usage_bytes / 1024).toFixed(1)} KB</span></div>
             `;
         }
-        
+
         function randomVector(dim) {
             const vec = new Float32Array(dim);
             for (let i = 0; i < dim; i++) vec[i] = Math.random() * 2 - 1;
@@ -315,14 +349,16 @@
         window.initDb = async () => {
             try {
                 setStatus('INITIALIZING...');
+                if (db) {
+                    db.free();
+                    db = null;
+                }
                 await init();
-                
-                if (db) db.free();
                 db = new SurgeDB(DIMENSIONS);
-                
+
                 log(`Initialized SurgeDB v${version()}`, 'success');
                 log(`Created index with ${DIMENSIONS} dimensions`, 'info');
-                
+
                 el('btnInit').disabled = true;
                 el('btnInsert').disabled = false;
                 el('btnBenchmark').disabled = false;
@@ -338,24 +374,24 @@
             if (!db) return;
             setStatus('INSERTING...');
             el('btnInsert').disabled = true;
-            
+
             try {
                 const categories = ['tech', 'science', 'art', 'music', 'gaming'];
                 const count = 100;
-                
+
                 // Allow UI to update before blocking
                 setTimeout(() => {
                     const t0 = performance.now();
                     for (let i = 0; i < count; i++) {
                         const vec = randomVector(DIMENSIONS);
-                        db.insert(`doc_${i}`, vec, { 
+                        db.insert(`doc_${i}`, vec, {
                             category: categories[i % categories.length],
                             tag: `tag_${i % 10}`
                         });
                     }
                     const t1 = performance.now();
-                    
-                    log(`Inserted ${count} vectors in ${(t1-t0).toFixed(2)}ms`, 'success');
+
+                    log(`Inserted ${count} vectors in ${(t1 - t0).toFixed(2)}ms`, 'success');
                     updateStats();
                     el('btnSearch').disabled = false;
                     el('btnInsert').disabled = false; // Re-enable if they want more
@@ -371,7 +407,7 @@
             if (!db) return;
             const id = el('searchId').value;
             if (!id) return;
-            
+
             setStatus('SEARCHING...');
             try {
                 // 1. Get the query vector from the document ID
@@ -381,14 +417,14 @@
                     setStatus('READY');
                     return;
                 }
-                
+
                 log(`Found '${id}', searching for similar...`, 'info');
-                
+
                 // 2. Search
                 const t0 = performance.now();
                 const results = db.search(doc.vector, 5); // Top 5
                 const t1 = performance.now();
-                
+
                 // Format results
                 const tableData = results.map(r => ({
                     id: r.id,
@@ -396,11 +432,11 @@
                     category: r.metadata?.category,
                     tag: r.metadata?.tag
                 }));
-                
+
                 log(tableData); // Will render table
-                log(`Search completed in ${(t1-t0).toFixed(2)}ms`, 'success');
+                log(`Search completed in ${(t1 - t0).toFixed(2)}ms`, 'success');
                 setStatus('READY');
-                
+
             } catch (e) {
                 log(`Error: ${e}`, 'error');
                 setStatus('ERROR');
@@ -410,10 +446,10 @@
         window.runBenchmark = async () => {
             if (confirm("This will reset the DB. Continue?")) {
                 await window.initDb();
-                
+
                 setStatus('BENCHMARKING...');
                 log('Starting 1k vector benchmark...', 'info');
-                
+
                 setTimeout(() => {
                     // Insert
                     const count = 1000;
@@ -422,9 +458,9 @@
                         db.insert(`bench_${i}`, randomVector(DIMENSIONS), { id: i });
                     }
                     const tInsert = performance.now() - t0;
-                    log(`Inserted ${count} items: ${tInsert.toFixed(2)}ms (${(count/tInsert*1000).toFixed(0)} ops/s)`, 'data');
+                    log(`Inserted ${count} items: ${tInsert.toFixed(2)}ms (${(count / tInsert * 1000).toFixed(0)} ops/s)`, 'data');
                     updateStats();
-                    
+
                     // Search
                     const queries = 100;
                     const t1 = performance.now();
@@ -432,12 +468,13 @@
                         db.search(randomVector(DIMENSIONS), 10);
                     }
                     const tSearch = performance.now() - t1;
-                    log(`Ran ${queries} queries: ${tSearch.toFixed(2)}ms (${(tSearch/queries).toFixed(2)} ms/query)`, 'data');
-                    
+                    log(`Ran ${queries} queries: ${tSearch.toFixed(2)}ms (${(tSearch / queries).toFixed(2)} ms/query)`, 'data');
+
                     setStatus('READY');
                 }, 50);
             }
         };
     </script>
 </body>
+
 </html>
