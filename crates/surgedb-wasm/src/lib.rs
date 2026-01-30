@@ -236,11 +236,11 @@ impl SurgeDB {
         } else {
             let parsed: serde_json::Value = serde_wasm_bindgen::from_value(metadata.clone())
                 .map_err(|e| JsValue::from_str(&format!("Metadata parse error: {}", e)))?;
-            
+
             // Log what we parsed
             let s = serde_json::to_string(&parsed).unwrap_or_default();
             web_sys::console::log_1(&format!("Parsed metadata: {}", s).into());
-            
+
             Some(parsed)
         };
 
@@ -271,6 +271,25 @@ impl SurgeDB {
 
         self.inner
             .upsert(id, &vector, meta)
+            .map_err(|e| SurgeError::from(e))?;
+
+        Ok(())
+    }
+
+    /// Insert or update multiple vectors in a single operation
+    ///
+    /// @param entries - Array of { id, vector, metadata } objects
+    #[wasm_bindgen(js_name = upsertBatch)]
+    pub fn upsert_batch(&mut self, entries: JsValue) -> Result<(), JsValue> {
+        let items: Vec<VectorEntry> = serde_wasm_bindgen::from_value(entries)?;
+
+        let core_items: Vec<(String, Vec<f32>, Option<serde_json::Value>)> = items
+            .into_iter()
+            .map(|e| (e.id, e.vector, e.metadata))
+            .collect();
+
+        self.inner
+            .upsert_batch(core_items)
             .map_err(|e| SurgeError::from(e))?;
 
         Ok(())
@@ -334,10 +353,12 @@ impl SurgeDB {
 
         // Configure serializer to convert Maps to plain Objects (fixes JSON.stringify issue)
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-        
+
         // We use serialize(&serializer) instead of to_value
         use serde::Serialize;
-        search_results.serialize(&serializer).map_err(|e| JsValue::from_str(&e.to_string()))
+        search_results
+            .serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Get the number of vectors in the database
@@ -437,7 +458,25 @@ impl SurgeDBQuantized {
         Ok(())
     }
 
+    /// Insert or update multiple vectors in a single operation
+    #[wasm_bindgen(js_name = upsertBatch)]
+    pub fn upsert_batch(&mut self, entries: JsValue) -> Result<(), JsValue> {
+        let items: Vec<VectorEntry> = serde_wasm_bindgen::from_value(entries)?;
+
+        let core_items: Vec<(String, Vec<f32>, Option<serde_json::Value>)> = items
+            .into_iter()
+            .map(|e| (e.id, e.vector, e.metadata))
+            .collect();
+
+        self.inner
+            .upsert_batch(core_items)
+            .map_err(|e| SurgeError::from(e))?;
+
+        Ok(())
+    }
+
     /// Delete a vector by ID
+
     #[wasm_bindgen]
     pub fn delete(&mut self, id: String) -> Result<bool, JsValue> {
         self.inner
