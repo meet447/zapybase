@@ -1,6 +1,8 @@
 # SurgeDB
 
 ![Rust CI](https://github.com/meet447/SurgeDB/actions/workflows/rust.yml/badge.svg)
+[![PyPI](https://img.shields.io/pypi/v/surgedb.svg)](https://pypi.org/project/surgedb/)
+[![npm](https://img.shields.io/npm/v/surgedb-wasm.svg)](https://www.npmjs.com/package/surgedb-wasm)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
 

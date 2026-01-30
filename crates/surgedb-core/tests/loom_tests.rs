@@ -56,11 +56,7 @@ fn test_write_exclusion() {
         h2.join().unwrap();
 
         let final_value = *data.read().unwrap();
-        assert!(
-            final_value == 11 || final_value == 11,
-            "Expected 11, got {}",
-            final_value
-        );
+        assert!(final_value == 11, "Expected 11, got {}", final_value);
     });
 }
 
@@ -89,7 +85,7 @@ fn test_read_modify_write() {
 
         // Due to the intentional race, value could be 1 or 2
         let final_value = *counter.read().unwrap();
-        assert!(final_value >= 1 && final_value <= 2);
+        assert!((1..=2).contains(&final_value));
     });
 }
 
