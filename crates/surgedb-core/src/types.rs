@@ -37,6 +37,41 @@ impl std::fmt::Display for VectorId {
     }
 }
 
+/// Helper for serializing/deserializing metadata with bincode
+/// Bincode does not support deserialize_any, which serde_json::Value uses.
+/// We work around this by serializing Value to/from a JSON string.
+pub mod metadata_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S>(value: &Option<Value>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => {
+                let s = serde_json::to_string(v).map_err(serde::ser::Error::custom)?;
+                serializer.serialize_some(&s)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        match s {
+            Some(s) => {
+                let v = serde_json::from_str(&s).map_err(serde::de::Error::custom)?;
+                Ok(Some(v))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 /// Internal vector identifier (for indexing)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct InternalId(pub(crate) u32);

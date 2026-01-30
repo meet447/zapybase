@@ -24,6 +24,7 @@ const SNAPSHOT_VERSION: u8 = 2;
 pub struct StoredVector {
     pub id: VectorId,
     pub vector: Vec<f32>,
+    #[serde(with = "crate::types::metadata_serde")]
     pub metadata: Option<Value>,
 }
 
@@ -277,6 +278,21 @@ mod tests {
         assert_eq!(loaded.dimensions, 4);
         assert_eq!(loaded.vectors.len(), 2);
         assert_eq!(loaded.vectors[0].id.as_str(), "v1");
+    }
+
+    #[test]
+    fn test_snapshot_with_metadata() {
+        let dir = tempdir().unwrap();
+        let manager = SnapshotManager::new(dir.path()).unwrap();
+        let meta = serde_json::json!({"key": "value", "tags": ["a", "b"]});
+
+        let mut snapshot = Snapshot::new(1, 100, 4);
+        snapshot.add_vector("v1".into(), vec![1.0, 2.0, 3.0, 4.0], Some(meta.clone()));
+
+        let path = manager.save(&snapshot).unwrap();
+        let loaded = manager.load(&path).unwrap();
+
+        assert_eq!(loaded.vectors[0].metadata.as_ref(), Some(&meta));
     }
 
     #[test]

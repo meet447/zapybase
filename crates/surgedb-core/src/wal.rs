@@ -30,6 +30,7 @@ pub enum WalEntry {
     Insert {
         id: VectorId,
         vector: Vec<f32>,
+        #[serde(with = "crate::types::metadata_serde")]
         metadata: Option<Value>,
     },
     /// Delete a vector
@@ -505,6 +506,31 @@ mod tests {
             })
             .unwrap();
         assert_eq!(seq, 6); // Sequence continues
+    }
+
+    #[test]
+    fn test_wal_with_metadata() {
+        let dir = tempdir().unwrap();
+        let mut wal = Wal::open(dir.path()).unwrap();
+        let meta = serde_json::json!({"key": "value", "nested": {"a": 1}});
+
+        wal.append(WalEntry::Insert {
+            id: "v1".into(),
+            vector: vec![1.0, 2.0],
+            metadata: Some(meta.clone()),
+        })
+        .unwrap();
+        wal.sync().unwrap();
+
+        let wal2 = Wal::open(dir.path()).unwrap();
+        let entries = wal2.read_all().unwrap();
+        assert_eq!(entries.len(), 1);
+
+        if let WalEntry::Insert { metadata, .. } = &entries[0] {
+            assert_eq!(metadata.as_ref(), Some(&meta));
+        } else {
+            panic!("Expected Insert");
+        }
     }
 
     #[test]
