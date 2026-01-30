@@ -17,6 +17,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use surgedb_core::VectorId;
 use wasm_bindgen::prelude::*;
 
 // Initialize panic hook for better error messages
@@ -283,9 +284,9 @@ impl SurgeDB {
     pub fn upsert_batch(&mut self, entries: JsValue) -> Result<(), JsValue> {
         let items: Vec<VectorEntry> = serde_wasm_bindgen::from_value(entries)?;
 
-        let core_items: Vec<(String, Vec<f32>, Option<serde_json::Value>)> = items
+        let core_items: Vec<(VectorId, Vec<f32>, Option<serde_json::Value>)> = items
             .into_iter()
-            .map(|e| (e.id, e.vector, e.metadata))
+            .map(|e| (VectorId::from(e.id), e.vector, e.metadata))
             .collect();
 
         self.inner
@@ -463,9 +464,9 @@ impl SurgeDBQuantized {
     pub fn upsert_batch(&mut self, entries: JsValue) -> Result<(), JsValue> {
         let items: Vec<VectorEntry> = serde_wasm_bindgen::from_value(entries)?;
 
-        let core_items: Vec<(String, Vec<f32>, Option<serde_json::Value>)> = items
+        let core_items: Vec<(VectorId, Vec<f32>, Option<serde_json::Value>)> = items
             .into_iter()
-            .map(|e| (e.id, e.vector, e.metadata))
+            .map(|e| (VectorId::from(e.id), e.vector, e.metadata))
             .collect();
 
         self.inner
