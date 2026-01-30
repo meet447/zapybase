@@ -16,8 +16,6 @@ surgedb_mmap/
 .DS_Store
 
 dataset
-Roadmap.md
-website 
 
 # Python bindings - generated artifacts
 crates/surgedb-bindings/python/*.dylib
@@ -28,3 +26,6 @@ __pycache__/
 
 # WASM bindings - generated artifacts
 crates/surgedb-wasm/pkg/
+
+website
+roadmap.md

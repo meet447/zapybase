@@ -1,112 +1,88 @@
-# name: CI
+name: CI
 
-# on:
-#   push:
-#     branches: [main, master]
-#   pull_request:
-#     branches: [main, master]
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
-# env:
-#   CARGO_TERM_COLOR: always
-#   RUSTFLAGS: -Dwarnings
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
 
-# jobs:
-#   # ============================================================================
-#   # Core Tests
-#   # ============================================================================
-#   test:
-#     name: Test Suite
-#     runs-on: ${{ matrix.os }}
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         os: [ubuntu-latest, macos-latest, windows-latest]
-#         rust: [stable, beta]
-#         exclude:
-#           - os: windows-latest
-#             rust: beta
-#           - os: macos-latest
-#             rust: beta
+jobs:
+  # ============================================================================
+  # Core Tests
+  # ============================================================================
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
 
-#     steps:
-#       - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Install Rust
-#         uses: dtolnay/rust-toolchain@master
-#         with:
-#           toolchain: ${{ matrix.rust }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
 
-#       - name: Cache cargo registry
-#         uses: actions/cache@v4
-#         with:
-#           path: |
-#             ~/.cargo/registry
-#             ~/.cargo/git
-#             target
-#           key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
 
-#       - name: Run tests
-#         run: cargo test --workspace --all-features
+      - name: Run tests
+        run: cargo test --workspace --all-features
 
-#       - name: Run property tests
-#         run: cargo test --test proptest
+  # ============================================================================
+  # Linting & Formatting
+  # ============================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-#   # ============================================================================
-#   # Linting & Formatting
-#   # ============================================================================
-#   lint:
-#     name: Lint
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-#       - name: Install Rust
-#         uses: dtolnay/rust-toolchain@stable
-#         with:
-#           components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-#       - name: Check formatting
-#         run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-#       - name: Clippy
-#         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+  # ============================================================================
+  # WASM Build Check
+  # ============================================================================
+  wasm:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-#   # ============================================================================
-#   # Documentation
-#   # ============================================================================
-#   docs:
-#     name: Documentation
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-#       - name: Install Rust
-#         uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-#       - name: Check documentation
-#         run: cargo doc --workspace --no-deps --all-features
-#         env:
-#           RUSTDOCFLAGS: -Dwarnings
+      - name: Build WASM
+        run: wasm-pack build crates/surgedb-wasm --target web
 
-#   # ============================================================================
-#   # WASM Build Check
-#   # ============================================================================
-#   wasm:
-#     name: WASM Build
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-
-#       - name: Install Rust
-#         uses: dtolnay/rust-toolchain@stable
-#         with:
-#           targets: wasm32-unknown-unknown
-
-#       - name: Install wasm-pack
-#         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-#       - name: Build WASM
-#         run: wasm-pack build crates/surgedb-wasm --target web
 
 #   # ============================================================================
 #   # Android/iOS Cross-Compilation Checks

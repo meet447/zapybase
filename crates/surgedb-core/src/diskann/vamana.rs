@@ -6,6 +6,7 @@ use super::storage::GraphStorage;
 use crate::error::Result;
 
 pub struct VamanaIndex {
+    #[allow(dead_code)]
     storage: GraphStorage,
 }
 

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Meet Sonawane"]
 license = "MIT"
-repository = "https://github.com/meetsonawane/surgedb"
+repository = "https://github.com/meet447/SurgeDB"
 description = "A high-performance, lightweight vector database"
 
 [workspace.dependencies]

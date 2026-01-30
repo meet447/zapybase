@@ -1,6 +1,6 @@
 # SurgeDB
 
-![Rust CI](https://github.com/meetsonawane/surgedb/actions/workflows/rust.yml/badge.svg)
+![Rust CI](https://github.com/meet447/SurgeDB/actions/workflows/rust.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
 
@@ -99,8 +99,17 @@ Add SurgeDB to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-surgedb-core = { git = "https://github.com/meet447/surgedb" }
+surgedb-core = { git = "https://github.com/meet447/SurgeDB" }
 ```
+
+---
+
+## Examples
+
+Standalone examples for different SDKs can be found in the [examples/](./examples) directory:
+
+* [Rust Basic Example](./examples/rust/basic.rs)
+* [Python Basic Example](./examples/python/basic.py)
 
 ---
 
