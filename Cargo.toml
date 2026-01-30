@@ -26,3 +26,8 @@ clap = { version = "4.4", features = ["derive"] }
 
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+# Optimize for small code size
+opt-level = "s"
+lto = true

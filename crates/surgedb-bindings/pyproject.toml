@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "surgedb"
+description = "A high-performance, lightweight vector database"
+authors = [
+    { name = "Meet Sonawane", email = "meet.sonawane2015@gmail.com" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.7"
+keywords = ["vector-database", "similarity-search", "hnsw", "embedding"]
+dynamic = ["version"]
+
+[tool.maturin]
+bindings = "uniffi"
