@@ -6,6 +6,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::SocketAddr;
@@ -22,7 +23,6 @@ use tracing::{info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
-use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]
@@ -38,12 +38,20 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     match Assets::get(&path) {
         Some(content) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            ([(axum::http::header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+            (
+                [(axum::http::header::CONTENT_TYPE, mime.as_ref())],
+                content.data,
+            )
+                .into_response()
         }
         None => {
             // Fallback to index.html for SPA routing
             if let Some(content) = Assets::get("index.html") {
-                ([(axum::http::header::CONTENT_TYPE, "text/html")], content.data).into_response()
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/html")],
+                    content.data,
+                )
+                    .into_response()
             } else {
                 (StatusCode::NOT_FOUND, "Not Found").into_response()
             }
@@ -101,8 +109,8 @@ impl AppConfig {
 }
 
 use chrono::{DateTime, Utc};
-use std::collections::VecDeque;
 use parking_lot::RwLock as PRwLock;
+use std::collections::VecDeque;
 
 // =============================================================================
 // Configuration
@@ -164,7 +172,6 @@ struct AppState {
     start_time: Instant,
     metrics: Arc<MetricsRegistry>,
 }
-
 
 #[derive(Deserialize, ToSchema)]
 struct CreateCollectionRequest {
@@ -288,12 +295,12 @@ async fn metrics_middleware(
 ) -> impl IntoResponse {
     let start = Instant::now();
     let method = req.method().clone();
-    
+
     let response = next.run(req).await;
-    
+
     let latency = start.elapsed().as_secs_f64() * 1000.0;
     state.metrics.record_request(&method, latency);
-    
+
     response
 }
 
@@ -368,7 +375,7 @@ async fn main() {
         loop {
             tokio::time::sleep(Duration::from_secs(6)).await;
             sys.refresh_all();
-            
+
             let pid = sysinfo::get_current_pid().ok();
             let process_memory = pid
                 .and_then(|p| sys.process(p))
@@ -397,7 +404,7 @@ async fn main() {
             } else {
                 0.0
             };
-            
+
             // Storage usage calculation
             let db_stats = state_clone.db.get_stats();
             let storage_bytes = db_stats.total_memory_bytes as u64;
@@ -430,13 +437,19 @@ async fn main() {
     let api_routes = Router::new()
         .route("/stats", get(get_stats))
         .route("/metrics/history", get(get_metrics_history))
-        .route("/collections", post(create_collection).get(list_collections))
+        .route(
+            "/collections",
+            post(create_collection).get(list_collections),
+        )
         .route("/collections/:name", delete(delete_collection))
         .route(
             "/collections/:name/vectors",
             post(insert_vector).get(list_vectors),
         )
-        .route("/collections/:name/vectors/batch", post(batch_insert_vector))
+        .route(
+            "/collections/:name/vectors/batch",
+            post(batch_insert_vector),
+        )
         .route("/collections/:name/upsert", post(upsert_vector))
         .route(
             "/collections/:name/vectors/:id",
@@ -475,7 +488,7 @@ async fn main() {
 
     let api_addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let web_addr = SocketAddr::from(([0, 0, 0, 0], config.web_port));
-    
+
     info!("API Server listening on {}", api_addr);
     info!("Web Interface listening on {}", web_addr);
 
@@ -554,7 +567,7 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
     if let Some(p) = pid {
         sys.refresh_process(p);
     }
-    
+
     let process_memory = pid
         .and_then(|p| sys.process(p))
         .map(|p| p.memory())

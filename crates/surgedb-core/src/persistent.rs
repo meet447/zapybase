@@ -12,7 +12,7 @@ use crate::wal::{Wal, WalEntry};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Configuration for persistent database
 #[derive(Debug, Clone)]

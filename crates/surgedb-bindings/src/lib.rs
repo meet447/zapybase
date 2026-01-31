@@ -588,10 +588,10 @@ impl SurgeClient {
         let ids = match &*inner {
             DbInner::InMemory(db) => db.list(offset as usize, limit as usize),
             DbInner::Quantized(db) => db.list(offset as usize, limit as usize),
-            DbInner::Persistent(_) => vec![], // TODO: Add list to PersistentVectorDb
+            DbInner::Persistent(db) => db.list(offset as usize, limit as usize),
         };
 
-        ids.into_iter().map(|id| id.to_string()).collect()
+        ids.into_iter().map(|(id, _)| id.to_string()).collect()
     }
 
     /// Get number of vectors

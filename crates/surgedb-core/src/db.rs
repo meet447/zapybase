@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CollectionStats {
@@ -298,7 +298,7 @@ impl Database {
 
     pub fn delete_collection(&self, name: &str) -> Result<()> {
         let mut collections = self.collections.write();
-        if let Some(_) = collections.remove(name) {
+        if collections.remove(name).is_some() {
             #[cfg(feature = "persistence")]
             if let Some(base_path) = &self.path {
                 let col_path = base_path.join(name);
