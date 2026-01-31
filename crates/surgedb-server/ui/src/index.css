@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  background-color: #FFFFFF;
+  color: #000000;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar - wireframe style */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FFFFFF;
+  border-left: 1px solid #000000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #000000;
+  border: 2px solid #FFFFFF;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #E57E51;
+}
+
+/* Brutalist Button Style */
+.btn-brutal {
+  @apply px-6 py-2 border-2 border-black font-bold uppercase tracking-wider transition-all relative;
+  box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+}
+
+.btn-brutal:hover {
+  @apply translate-x-[2px] translate-y-[2px];
+  box-shadow: 2px 2px 0px 0px rgba(0,0,0,1);
+}
+
+.btn-brutal:active {
+  @apply translate-x-[4px] translate-y-[4px];
+  box-shadow: 0px 0px 0px 0px rgba(0,0,0,1);
+}
+
+.btn-brutal-orange {
+  @apply bg-surge-orange text-white;
+}
+
+.btn-brutal-white {
+  @apply bg-white text-black;
+}
+
+/* Wireframe Container */
+.wire-container {
+  @apply border-2 border-black bg-white;
+  box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+}

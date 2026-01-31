@@ -22,6 +22,38 @@ use tracing::{info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
+use rust_embed::RustEmbed;
+
+#[derive(RustEmbed)]
+#[folder = "dist/"]
+struct Assets;
+
+async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
+    let path = if path.is_empty() || path == "/" {
+        "index.html".to_string()
+    } else {
+        path
+    };
+
+    match Assets::get(&path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&path).first_or_octet_stream();
+            ([(axum::http::header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+        }
+        None => {
+            // Fallback to index.html for SPA routing
+            if let Some(content) = Assets::get("index.html") {
+                ([(axum::http::header::CONTENT_TYPE, "text/html")], content.data).into_response()
+            } else {
+                (StatusCode::NOT_FOUND, "Not Found").into_response()
+            }
+        }
+    }
+}
+
+async fn index_handler() -> impl IntoResponse {
+    static_handler(Path("index.html".to_string())).await
+}
 
 // =============================================================================
 // Configuration
@@ -30,11 +62,13 @@ use utoipa_swagger_ui::SwaggerUi;
 #[derive(Clone)]
 struct AppConfig {
     port: u16,
+    web_port: u16,
     api_key: Option<String>,
     log_level: String,
     cors_allow_origin: String,
     request_timeout_secs: u64,
     max_request_size_bytes: usize,
+    data_dir: String,
 }
 
 impl AppConfig {
@@ -45,6 +79,10 @@ impl AppConfig {
                 .unwrap_or_else(|_| "3000".to_string())
                 .parse()
                 .unwrap_or(3000),
+            web_port: std::env::var("WEB_PORT")
+                .unwrap_or_else(|_| "3001".to_string())
+                .parse()
+                .unwrap_or(3001),
             api_key: std::env::var("API_KEY").ok(),
             log_level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             cors_allow_origin: std::env::var("CORS_ALLOW_ORIGIN")
@@ -57,20 +95,76 @@ impl AppConfig {
                 .unwrap_or_else(|_| "10485760".to_string()) // 10MB
                 .parse()
                 .unwrap_or(10 * 1024 * 1024),
+            data_dir: std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()),
         }
     }
 }
 
+use chrono::{DateTime, Utc};
+use std::collections::VecDeque;
+use parking_lot::RwLock as PRwLock;
+
 // =============================================================================
-// State & Models
+// Configuration
 // =============================================================================
+
+#[derive(Serialize, Clone, Debug, ToSchema)]
+struct MetricsSnapshot {
+    timestamp: DateTime<Utc>,
+    memory_usage_mb: u64,
+    read_requests: u64,
+    write_requests: u64,
+    avg_latency_ms: f64,
+    storage_usage_bytes: u64,
+}
+
+struct MetricsRegistry {
+    history: PRwLock<VecDeque<MetricsSnapshot>>,
+    current_reads: std::sync::atomic::AtomicU64,
+    current_writes: std::sync::atomic::AtomicU64,
+    total_latency_us: std::sync::atomic::AtomicU64,
+    latency_count: std::sync::atomic::AtomicU64,
+}
+
+impl MetricsRegistry {
+    fn new() -> Self {
+        Self {
+            history: PRwLock::new(VecDeque::with_capacity(600)),
+            current_reads: std::sync::atomic::AtomicU64::new(0),
+            current_writes: std::sync::atomic::AtomicU64::new(0),
+            total_latency_us: std::sync::atomic::AtomicU64::new(0),
+            latency_count: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    fn record_request(&self, method: &Method, latency_ms: f64) {
+        match *method {
+            Method::GET => {
+                self.current_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            Method::POST | Method::PUT | Method::DELETE | Method::PATCH => {
+                self.current_writes
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        let latency_us = (latency_ms * 1000.0) as u64;
+        self.total_latency_us
+            .fetch_add(latency_us, std::sync::atomic::Ordering::Relaxed);
+        self.latency_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 #[derive(Clone)]
 struct AppState {
     db: Arc<Database>,
     config: AppConfig,
     start_time: Instant,
+    metrics: Arc<MetricsRegistry>,
 }
+
 
 #[derive(Deserialize, ToSchema)]
 struct CreateCollectionRequest {
@@ -158,6 +252,7 @@ struct VectorResponse {
     paths(
         health_check,
         get_stats,
+        get_metrics_history,
         create_collection,
         list_collections,
         delete_collection,
@@ -173,7 +268,7 @@ struct VectorResponse {
         schemas(
             CreateCollectionRequest, InsertRequest, BatchInsertRequest,
             SearchRequest, SearchResult, ErrorResponse, HealthResponse,
-            StatsResponse, VectorResponse
+            StatsResponse, VectorResponse, MetricsSnapshot, VectorListEntry
         )
     ),
     tags(
@@ -185,6 +280,22 @@ struct ApiDoc;
 // =============================================================================
 // Middleware
 // =============================================================================
+
+async fn metrics_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let start = Instant::now();
+    let method = req.method().clone();
+    
+    let response = next.run(req).await;
+    
+    let latency = start.elapsed().as_secs_f64() * 1000.0;
+    state.metrics.record_request(&method, latency);
+    
+    response
+}
 
 async fn auth_middleware(
     State(state): State<AppState>,
@@ -221,12 +332,92 @@ async fn main() {
 
     info!("Starting SurgeDB Server v{}", env!("CARGO_PKG_VERSION"));
 
-    let db = Database::new();
+    let db = Database::open(&config.data_dir).expect("Failed to open database");
+    let metrics = Arc::new(MetricsRegistry::new());
     let state = AppState {
         db: Arc::new(db),
         config: config.clone(),
         start_time: Instant::now(),
+        metrics: metrics.clone(),
     };
+
+    // Background task for metrics collection
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        let mut sys = System::new_all();
+        // Initial snapshot
+        {
+            sys.refresh_all();
+            let pid = sysinfo::get_current_pid().ok();
+            let process_memory = pid
+                .and_then(|p| sys.process(p))
+                .map(|p| p.memory())
+                .unwrap_or(0);
+            let db_stats = state_clone.db.get_stats();
+            let snapshot = MetricsSnapshot {
+                timestamp: Utc::now(),
+                memory_usage_mb: process_memory / 1024 / 1024,
+                read_requests: 0,
+                write_requests: 0,
+                avg_latency_ms: 0.0,
+                storage_usage_bytes: db_stats.total_memory_bytes as u64,
+            };
+            state_clone.metrics.history.write().push_back(snapshot);
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            sys.refresh_all();
+            
+            let pid = sysinfo::get_current_pid().ok();
+            let process_memory = pid
+                .and_then(|p| sys.process(p))
+                .map(|p| p.memory())
+                .unwrap_or(0);
+
+            let reads = state_clone
+                .metrics
+                .current_reads
+                .swap(0, std::sync::atomic::Ordering::Relaxed);
+            let writes = state_clone
+                .metrics
+                .current_writes
+                .swap(0, std::sync::atomic::Ordering::Relaxed);
+            let count = state_clone
+                .metrics
+                .latency_count
+                .swap(0, std::sync::atomic::Ordering::Relaxed);
+            let total_lat_us = state_clone
+                .metrics
+                .total_latency_us
+                .swap(0, std::sync::atomic::Ordering::Relaxed);
+
+            let avg_latency = if count > 0 {
+                (total_lat_us as f64 / 1000.0) / count as f64
+            } else {
+                0.0
+            };
+            
+            // Storage usage calculation
+            let db_stats = state_clone.db.get_stats();
+            let storage_bytes = db_stats.total_memory_bytes as u64;
+
+            let snapshot = MetricsSnapshot {
+                timestamp: Utc::now(),
+                memory_usage_mb: process_memory / 1024 / 1024,
+                read_requests: reads,
+                write_requests: writes,
+                avg_latency_ms: avg_latency,
+                storage_usage_bytes: storage_bytes,
+            };
+
+            let mut history = state_clone.metrics.history.write();
+            if history.len() >= 600 {
+                history.pop_front();
+            }
+            history.push_back(snapshot);
+        }
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(config.cors_allow_origin.parse::<HeaderValue>().unwrap())
@@ -236,55 +427,76 @@ async fn main() {
             HeaderName::from_static("x-api-key"),
         ]);
 
-    let app = Router::new()
+    let api_routes = Router::new()
+        .route("/stats", get(get_stats))
+        .route("/metrics/history", get(get_metrics_history))
+        .route("/collections", post(create_collection).get(list_collections))
+        .route("/collections/:name", delete(delete_collection))
+        .route(
+            "/collections/:name/vectors",
+            post(insert_vector).get(list_vectors),
+        )
+        .route("/collections/:name/vectors/batch", post(batch_insert_vector))
+        .route("/collections/:name/upsert", post(upsert_vector))
+        .route(
+            "/collections/:name/vectors/:id",
+            get(get_vector).delete(delete_vector),
+        )
+        .route("/collections/:name/search", post(search_vector))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
+
+    let api_router = Router::new()
         .route("/health", get(health_check))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .nest(
-            "/",
-            Router::new()
-                .route("/stats", get(get_stats))
-                .route(
-                    "/collections",
-                    post(create_collection).get(list_collections),
-                )
-                .route("/collections/:name", delete(delete_collection))
-                .route(
-                    "/collections/:name/vectors",
-                    post(insert_vector).get(list_vectors),
-                )
-                .route(
-                    "/collections/:name/vectors/batch",
-                    post(batch_insert_vector),
-                )
-                .route("/collections/:name/upsert", post(upsert_vector))
-                .route(
-                    "/collections/:name/vectors/:id",
-                    get(get_vector).delete(delete_vector),
-                )
-                .route("/collections/:name/search", post(search_vector))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth_middleware,
-                )),
-        )
+        .merge(api_routes)
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            metrics_middleware,
+        ))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::new(Duration::from_secs(
             config.request_timeout_secs,
         )))
         .layer(RequestBodyLimitLayer::new(config.max_request_size_bytes))
-        .layer(cors)
+        .layer(cors);
+
+    let api_app = api_router.clone().with_state(state.clone());
+
+    let web_app = Router::new()
+        .nest("/api", api_router)
+        .route("/", get(index_handler))
+        .route("/*path", get(static_handler))
+        .fallback(index_handler)
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    info!("Server listening on {}", addr);
+    let api_addr = SocketAddr::from(([0, 0, 0, 0], config.port));
+    let web_addr = SocketAddr::from(([0, 0, 0, 0], config.web_port));
+    
+    info!("API Server listening on {}", api_addr);
+    info!("Web Interface listening on {}", web_addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let api_listener = tokio::net::TcpListener::bind(api_addr).await.unwrap();
+    let web_listener = tokio::net::TcpListener::bind(web_addr).await.unwrap();
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
+    let api_server = axum::serve(api_listener, api_app).with_graceful_shutdown(shutdown_signal());
+    let web_server = axum::serve(web_listener, web_app).with_graceful_shutdown(shutdown_signal());
+
+    tokio::select! {
+        res = api_server => {
+            if let Err(e) = res {
+                warn!("API server error: {}", e);
+            }
+        }
+        res = web_server => {
+            if let Err(e) = res {
+                warn!("Web server error: {}", e);
+            }
+        }
+    }
 }
 
 async fn shutdown_signal() {
@@ -317,17 +529,32 @@ async fn shutdown_signal() {
 
 #[utoipa::path(
     get,
+    path = "/metrics/history",
+    responses(
+        (status = 200, description = "Metrics history", body = [MetricsSnapshot])
+    ),
+    security(("api_key" = []))
+)]
+async fn get_metrics_history(State(state): State<AppState>) -> Json<Vec<MetricsSnapshot>> {
+    let history = state.metrics.history.read();
+    Json(history.iter().cloned().collect())
+}
+
+#[utoipa::path(
+    get,
     path = "/health",
     responses(
         (status = 200, description = "Server is healthy", body = HealthResponse)
     )
 )]
 async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    // Get current process memory usage instead of total system memory
+    // Only refresh process info, not entire system
+    let mut sys = System::new();
     let pid = sysinfo::get_current_pid().ok();
+    if let Some(p) = pid {
+        sys.refresh_process(p);
+    }
+    
     let process_memory = pid
         .and_then(|p| sys.process(p))
         .map(|p| p.memory())
@@ -714,6 +941,12 @@ async fn delete_vector(
     }
 }
 
+#[derive(Serialize, ToSchema)]
+struct VectorListEntry {
+    id: String,
+    metadata: Option<Value>,
+}
+
 #[utoipa::path(
     get,
     path = "/collections/{name}/vectors",
@@ -722,7 +955,7 @@ async fn delete_vector(
         PaginationParams
     ),
     responses(
-        (status = 200, description = "List of vector IDs", body = [String])
+        (status = 200, description = "List of vector records", body = [VectorListEntry])
     ),
     security(("api_key" = []))
 )]
@@ -730,7 +963,7 @@ async fn list_vectors(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<Vec<String>>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<Vec<VectorListEntry>>, (StatusCode, Json<ErrorResponse>)> {
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -754,7 +987,15 @@ async fn list_vectors(
             )
         })?;
 
-    Ok(Json(result.into_iter().map(|id| id.to_string()).collect()))
+    Ok(Json(
+        result
+            .into_iter()
+            .map(|(id, metadata)| VectorListEntry {
+                id: id.to_string(),
+                metadata,
+            })
+            .collect(),
+    ))
 }
 
 #[utoipa::path(

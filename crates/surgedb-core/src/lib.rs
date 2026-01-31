@@ -105,7 +105,7 @@ pub use wal::{Wal, WalEntry};
 pub use db::{Database, DatabaseStats};
 
 /// Main database configuration (unquantized)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Dimensionality of vectors
     pub dimensions: usize,
@@ -281,12 +281,10 @@ impl VectorDb {
         }
     }
 
-    /// List all vector IDs (pagination)
-    pub fn list(&self, offset: usize, limit: usize) -> Vec<VectorId> {
+    /// List all vector IDs and metadata (pagination)
+    pub fn list(&self, offset: usize, limit: usize) -> Vec<(VectorId, Option<Value>)> {
         let ids = self.storage.all_internal_ids();
         ids.iter()
-            .skip(offset)
-            .take(limit)
             .filter_map(|&internal_id| {
                 // Filter stale
                 let ext_id = self.storage.get_external_id(internal_id)?;
@@ -294,8 +292,11 @@ impl VectorDb {
                 if current_internal != internal_id {
                     return None;
                 }
-                Some(ext_id)
+                let metadata = self.storage.get_metadata(internal_id);
+                Some((ext_id, metadata))
             })
+            .skip(offset)
+            .take(limit)
             .collect()
     }
 
@@ -498,12 +499,10 @@ impl QuantizedVectorDb {
         }
     }
 
-    /// List all vector IDs (pagination)
-    pub fn list(&self, offset: usize, limit: usize) -> Vec<VectorId> {
+    /// List all vector IDs and metadata (pagination)
+    pub fn list(&self, offset: usize, limit: usize) -> Vec<(VectorId, Option<Value>)> {
         let ids = self.storage.all_internal_ids();
         ids.iter()
-            .skip(offset)
-            .take(limit)
             .filter_map(|&internal_id| {
                 // Filter stale
                 let ext_id = self.storage.get_external_id(internal_id)?;
@@ -511,8 +510,11 @@ impl QuantizedVectorDb {
                 if current_internal != internal_id {
                     return None;
                 }
-                Some(ext_id)
+                let metadata = self.storage.get_metadata(internal_id);
+                Some((ext_id, metadata))
             })
+            .skip(offset)
+            .take(limit)
             .collect()
     }
 

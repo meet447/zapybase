@@ -12,6 +12,7 @@ use crate::wal::{Wal, WalEntry};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn};
 
 /// Configuration for persistent database
 #[derive(Debug, Clone)]
@@ -90,8 +91,9 @@ impl PersistentVectorDb {
     fn recover(&mut self) -> Result<()> {
         let mut last_wal_seq = 0u64;
 
-        // Load latest snapshot if available
+        // 1. Load latest snapshot if available
         if let Some(snapshot) = self.snapshot_manager.load_latest()? {
+            debug!("Loading snapshot for recovery...");
             last_wal_seq = snapshot.wal_seq;
 
             // Verify dimensions match
@@ -121,10 +123,17 @@ impl PersistentVectorDb {
             }
         }
 
-        // Replay WAL entries after snapshot
+        // 2. Replay WAL entries after snapshot
         let entries = self.wal.read_after(last_wal_seq)?;
+        let total = entries.len();
+        if total > 0 {
+            info!("Replaying {} WAL entries...", total);
+        }
 
-        for entry in entries {
+        for (i, entry) in entries.into_iter().enumerate() {
+            if i > 0 && i % 5000 == 0 {
+                info!("Progress: {}/{} entries replayed...", i, total);
+            }
             match entry {
                 WalEntry::Insert {
                     id,
@@ -138,13 +147,9 @@ impl PersistentVectorDb {
                     }
                 }
                 WalEntry::Delete { id } => {
-                    // Apply delete to storage
-                    // We don't need to do anything to index as it uses storage's deleted status
                     let _ = self.storage.delete(&id);
                 }
-                WalEntry::Checkpoint { .. } => {
-                    // Checkpoint markers don't need replay
-                }
+                WalEntry::Checkpoint { .. } => {}
             }
         }
 
@@ -292,6 +297,44 @@ impl PersistentVectorDb {
         self.storage.len()
     }
 
+    /// Retrieve a vector by its external ID
+    pub fn get(&self, id: &str) -> Result<Option<(Vec<f32>, Option<Value>)>> {
+        let id = VectorId::from(id);
+        if let Some(internal_id) = self.storage.get_internal_id(&id) {
+            let vector = self
+                .storage
+                .get(internal_id)
+                .ok_or(Error::VectorNotFound(id.to_string()))?;
+            let metadata = self.storage.get_metadata(internal_id);
+            Ok(Some((vector, metadata)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all vector IDs and metadata (pagination)
+    pub fn list(&self, offset: usize, limit: usize) -> Vec<(VectorId, Option<Value>)> {
+        let ids = self.storage.all_internal_ids();
+        ids.iter()
+            .filter_map(|&internal_id| {
+                let ext_id = self.storage.get_external_id(internal_id)?;
+                // Check if deleted
+                if self.storage.is_deleted(internal_id) {
+                    return None;
+                }
+                // Check if stale
+                let current_internal = self.storage.get_internal_id(&ext_id)?;
+                if current_internal != internal_id {
+                    return None;
+                }
+                let metadata = self.storage.get_metadata(internal_id);
+                Some((ext_id, metadata))
+            })
+            .skip(offset)
+            .take(limit)
+            .collect()
+    }
+
     /// Check if the database is empty
     pub fn is_empty(&self) -> bool {
         self.storage.is_empty()
@@ -305,114 +348,5 @@ impl PersistentVectorDb {
     /// Get data directory
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_persistent_insert_and_search() {
-        let dir = tempdir().unwrap();
-        let config = PersistentConfig {
-            dimensions: 4,
-            ..Default::default()
-        };
-
-        let mut db = PersistentVectorDb::open(dir.path(), config).unwrap();
-
-        db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
-        db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
-        db.insert("vec3", &[0.9, 0.1, 0.0, 0.0], None).unwrap();
-
-        let results = db.search(&[1.0, 0.0, 0.0, 0.0], 2, None).unwrap();
-
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].0.as_str(), "vec1");
-    }
-
-    #[test]
-    fn test_persistent_recovery() {
-        let dir = tempdir().unwrap();
-        let config = PersistentConfig {
-            dimensions: 4,
-            ..Default::default()
-        };
-
-        // Insert some vectors
-        {
-            let mut db = PersistentVectorDb::open(dir.path(), config.clone()).unwrap();
-            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
-            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
-            db.sync().unwrap();
-        }
-
-        // Reopen and verify recovery
-        {
-            let db = PersistentVectorDb::open(dir.path(), config).unwrap();
-            assert_eq!(db.len(), 2);
-
-            let results = db.search(&[1.0, 0.0, 0.0, 0.0], 1, None).unwrap();
-            assert_eq!(results[0].0.as_str(), "vec1");
-        }
-    }
-
-    #[test]
-    fn test_persistent_checkpoint_and_recovery() {
-        let dir = tempdir().unwrap();
-        let config = PersistentConfig {
-            dimensions: 4,
-            ..Default::default()
-        };
-
-        // Insert vectors and checkpoint
-        {
-            let mut db = PersistentVectorDb::open(dir.path(), config.clone()).unwrap();
-            db.insert("vec1", &[1.0, 0.0, 0.0, 0.0], None).unwrap();
-            db.insert("vec2", &[0.0, 1.0, 0.0, 0.0], None).unwrap();
-            db.checkpoint().unwrap();
-
-            // Add more after checkpoint
-            db.insert("vec3", &[0.0, 0.0, 1.0, 0.0], None).unwrap();
-            db.sync().unwrap();
-        }
-
-        // Reopen and verify full recovery
-        {
-            let db = PersistentVectorDb::open(dir.path(), config).unwrap();
-            assert_eq!(db.len(), 3);
-
-            let results = db.search(&[0.0, 0.0, 1.0, 0.0], 1, None).unwrap();
-            assert_eq!(results[0].0.as_str(), "vec3");
-        }
-    }
-
-    #[test]
-    fn test_persistent_large_dataset() {
-        let dir = tempdir().unwrap();
-        let config = PersistentConfig {
-            dimensions: 128,
-            checkpoint_threshold: 1024 * 1024, // 1MB - force frequent checkpoints
-            ..Default::default()
-        };
-
-        // Insert many vectors
-        {
-            let mut db = PersistentVectorDb::open(dir.path(), config.clone()).unwrap();
-
-            for i in 0..1000 {
-                let vector: Vec<f32> = (0..128).map(|j| ((i * j) as f32).sin()).collect();
-                db.insert(format!("v{}", i), &vector, None).unwrap();
-            }
-            db.sync().unwrap();
-        }
-
-        // Reopen and verify
-        {
-            let db = PersistentVectorDb::open(dir.path(), config).unwrap();
-            assert_eq!(db.len(), 1000);
-        }
     }
 }

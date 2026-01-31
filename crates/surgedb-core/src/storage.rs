@@ -150,7 +150,9 @@ impl VectorStorage {
         vectors.extend_from_slice(vector);
 
         // Update mappings
-        id_to_internal.insert(id.clone(), internal_id);
+        if let Some(old_internal_id) = id_to_internal.insert(id.clone(), internal_id) {
+            self.deleted.write().insert(old_internal_id);
+        }
         internal_to_id.push(id);
 
         // Store metadata if present
@@ -197,7 +199,9 @@ impl VectorStorage {
             vectors.extend_from_slice(vector);
 
             // Update mappings
-            id_to_internal.insert(id.clone(), internal_id);
+            if let Some(old_internal_id) = id_to_internal.insert(id.clone(), internal_id) {
+                self.deleted.write().insert(old_internal_id);
+            }
             internal_to_id.push(id.clone());
 
             // Metadata
@@ -246,8 +250,13 @@ impl VectorStorage {
         internal_to_id.get(internal_id.as_usize()).cloned()
     }
 
-    /// Get the number of stored vectors
+    /// Get the number of active vectors
     pub fn len(&self) -> usize {
+        self.id_to_internal.read().len()
+    }
+
+    /// Get the total number of slots used (including stale/deleted)
+    pub fn total_slots(&self) -> usize {
         self.internal_to_id.read().len()
     }
 
@@ -367,10 +376,10 @@ impl VectorStorageTrait for VectorStorage {
         }
     }
     fn get_metadata(&self, internal_id: InternalId) -> Option<Value> {
-        if self.is_deleted(internal_id) {
+        if self.deleted.read().contains(&internal_id) {
             return None;
         }
-        self.get_metadata(internal_id)
+        self.metadata.read().get(&internal_id).cloned()
     }
 
     fn is_deleted(&self, internal_id: InternalId) -> bool {

@@ -5,11 +5,21 @@ target/
 *.log
 
 # Data directories and files
+data/
 surgedb_data/
 surgedb_mmap/
 *.dat
 *.snap
 *.wal
+
+# UI Dashboard
+crates/surgedb-server/ui/node_modules/
+crates/surgedb-server/dist/
+crates/surgedb-server/ui/dist/
+
+# Python test scripts
+test_server.py
+load_test.py
 
 # Backup and temp files
 *.rs.bk
