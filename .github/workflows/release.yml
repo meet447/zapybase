@@ -41,6 +41,17 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build UI
+        run: |
+          cd crates/surgedb-server/ui
+          npm install
+          npm run build
+
       - name: Build Binary
         run: cargo build --release --bin surgedb-server --target ${{ matrix.target }}
 
