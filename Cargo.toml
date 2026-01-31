@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/surgedb-core", "crates/surgedb-cli", "crates/surgedb-server", "crates/surgedb-bindings", "crates/surgedb-wasm"]
 
 [workspace.package]
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 edition = "2021"
 authors = ["Meet Sonawane"]
 license = "MIT"
