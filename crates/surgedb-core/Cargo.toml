@@ -33,6 +33,18 @@ loom = "0.7"
 name = "distance"
 harness = false
 
+[[bench]]
+name = "vector_db"
+harness = false
+
+[[bench]]
+name = "quantized_db"
+harness = false
+
+[[bench]]
+name = "persistence"
+harness = false
+
 [features]
 default = ["simd", "persistence", "parallel"]
 simd = []

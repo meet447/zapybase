@@ -304,6 +304,30 @@ async fn metrics_middleware(
     response
 }
 
+fn perf_enabled() -> bool {
+    std::env::var("SURGEDB_PERF_LOG").is_ok()
+}
+
+fn log_perf(op: &str, total_ms: f64, work_ms: f64, map_ms: Option<f64>, count: Option<usize>) {
+    if !perf_enabled() {
+        return;
+    }
+    match (map_ms, count) {
+        (Some(map_ms), Some(count)) => {
+            info!(target: "perf", op, total_ms, work_ms, map_ms, count);
+        }
+        (Some(map_ms), None) => {
+            info!(target: "perf", op, total_ms, work_ms, map_ms);
+        }
+        (None, Some(count)) => {
+            info!(target: "perf", op, total_ms, work_ms, count);
+        }
+        (None, None) => {
+            info!(target: "perf", op, total_ms, work_ms);
+        }
+    }
+}
+
 async fn auth_middleware(
     State(state): State<AppState>,
     req: Request,
@@ -697,6 +721,7 @@ async fn insert_vector(
     Path(name): Path<String>,
     Json(payload): Json<InsertRequest>,
 ) -> Result<&'static str, (StatusCode, Json<ErrorResponse>)> {
+    let handler_start = Instant::now();
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -706,6 +731,7 @@ async fn insert_vector(
         )
     })?;
 
+    let work_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
         collection.insert(payload.id, &payload.vector, payload.metadata)
     })
@@ -718,6 +744,10 @@ async fn insert_vector(
             }),
         )
     })?;
+
+    let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+    let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+    log_perf("insert_vector", total_ms, work_ms, None, None);
 
     match result {
         Ok(_) => Ok("Inserted"),
@@ -748,6 +778,7 @@ async fn upsert_vector(
     Path(name): Path<String>,
     Json(payload): Json<InsertRequest>,
 ) -> Result<&'static str, (StatusCode, Json<ErrorResponse>)> {
+    let handler_start = Instant::now();
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -757,6 +788,7 @@ async fn upsert_vector(
         )
     })?;
 
+    let work_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
         collection.upsert(payload.id, &payload.vector, payload.metadata)
     })
@@ -769,6 +801,10 @@ async fn upsert_vector(
             }),
         )
     })?;
+
+    let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+    let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+    log_perf("upsert_vector", total_ms, work_ms, None, None);
 
     match result {
         Ok(_) => Ok("Upserted"),
@@ -799,6 +835,7 @@ async fn batch_insert_vector(
     Path(name): Path<String>,
     Json(payload): Json<BatchInsertRequest>,
 ) -> Result<Json<usize>, (StatusCode, Json<ErrorResponse>)> {
+    let handler_start = Instant::now();
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -809,6 +846,7 @@ async fn batch_insert_vector(
     })?;
 
     let count = payload.vectors.len();
+    let work_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
         let items: Vec<(String, Vec<f32>, Option<Value>)> = payload
             .vectors
@@ -828,6 +866,10 @@ async fn batch_insert_vector(
             }),
         )
     })?;
+
+    let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+    let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+    log_perf("batch_insert_vector", total_ms, work_ms, None, Some(count));
 
     match result {
         Ok(_) => Ok(Json(count)),
@@ -1029,6 +1071,7 @@ async fn search_vector(
     Path(name): Path<String>,
     Json(payload): Json<SearchRequest>,
 ) -> Result<Json<Vec<SearchResult>>, (StatusCode, Json<ErrorResponse>)> {
+    let handler_start = Instant::now();
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -1038,6 +1081,7 @@ async fn search_vector(
         )
     })?;
 
+    let work_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
         collection.search(&payload.vector, payload.k, payload.filter.as_ref())
     })
@@ -1053,7 +1097,8 @@ async fn search_vector(
 
     match result {
         Ok(results) => {
-            let response = results
+            let map_start = Instant::now();
+            let response: Vec<SearchResult> = results
                 .into_iter()
                 .map(|(id, distance, metadata)| SearchResult {
                     id: id.as_str().to_string(),
@@ -1061,6 +1106,10 @@ async fn search_vector(
                     metadata,
                 })
                 .collect();
+            let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+            let map_ms = map_start.elapsed().as_secs_f64() * 1000.0;
+            let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+            log_perf("search_vector", total_ms, work_ms, Some(map_ms), Some(response.len()));
             Ok(Json(response))
         }
         Err(e) => Err((
