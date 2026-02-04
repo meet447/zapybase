@@ -7,12 +7,13 @@ use crate::types::InternalId;
 use roaring::RoaringBitmap;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Inverted index for metadata fields
 #[derive(Default)]
 pub struct BitmapIndex {
     /// field -> value_str -> bitmap
-    index: HashMap<String, HashMap<String, RoaringBitmap>>,
+    index: HashMap<String, HashMap<String, Arc<RoaringBitmap>>>,
 }
 
 impl BitmapIndex {
@@ -48,16 +49,21 @@ impl BitmapIndex {
             primitive => {
                 // Index primitive value
                 if !prefix.is_empty() {
-                    let val_str = primitive.to_string(); // Handles numbers, bools, strings
-                                                         // Remove quotes from strings for cleaner keys if desired,
-                                                         // but keeping JSON string representation is safer for uniqueness
-
-                    self.index
+                    let val_str = primitive.to_string();
+                    let field = self
+                        .index
                         .entry(prefix.to_string())
-                        .or_default()
+                        .or_insert_with(HashMap::new);
+                    let entry = field
                         .entry(val_str)
-                        .or_default()
-                        .insert(id);
+                        .or_insert_with(|| Arc::new(RoaringBitmap::new()));
+                    if let Some(inner) = Arc::get_mut(entry) {
+                        inner.insert(id);
+                    } else {
+                        let mut cloned = (**entry).clone();
+                        cloned.insert(id);
+                        *entry = Arc::new(cloned);
+                    }
                 }
             }
         }
@@ -91,8 +97,13 @@ impl BitmapIndex {
                     let val_str = primitive.to_string();
                     if let Some(values) = self.index.get_mut(prefix) {
                         if let Some(bitmap) = values.get_mut(&val_str) {
-                            bitmap.remove(id);
-                            // Cleanup empty bitmaps/maps could go here
+                            if let Some(inner) = Arc::get_mut(bitmap) {
+                                inner.remove(id);
+                            } else {
+                                let mut cloned = (**bitmap).clone();
+                                cloned.remove(id);
+                                *bitmap = Arc::new(cloned);
+                            }
                         }
                     }
                 }
@@ -101,7 +112,7 @@ impl BitmapIndex {
     }
 
     /// Execute a filter query and return matching internal IDs
-    pub fn filter(&self, filter: &crate::filter::Filter) -> Option<RoaringBitmap> {
+    pub fn filter(&self, filter: &crate::filter::Filter) -> Option<Arc<RoaringBitmap>> {
         use crate::filter::Filter;
 
         match filter {
@@ -109,7 +120,7 @@ impl BitmapIndex {
                 if let Some(values) = self.index.get(key) {
                     values.get(&value.to_string()).cloned()
                 } else {
-                    Some(RoaringBitmap::new()) // Field not found -> empty set
+                    Some(Arc::new(RoaringBitmap::new())) // Field not found -> empty set
                 }
             }
             Filter::OneOf(key, values) => {
@@ -117,12 +128,12 @@ impl BitmapIndex {
                     let mut result = RoaringBitmap::new();
                     for val in values {
                         if let Some(bitmap) = field_values.get(&val.to_string()) {
-                            result |= bitmap;
+                            result |= bitmap.as_ref();
                         }
                     }
-                    Some(result)
+                    Some(Arc::new(result))
                 } else {
-                    Some(RoaringBitmap::new())
+                    Some(Arc::new(RoaringBitmap::new()))
                 }
             }
             Filter::And(filters) => {
@@ -130,26 +141,26 @@ impl BitmapIndex {
                 for f in filters {
                     if let Some(bitmap) = self.filter(f) {
                         match result {
-                            None => result = Some(bitmap),
-                            Some(ref mut r) => *r &= bitmap,
+                            None => result = Some(bitmap.as_ref().clone()),
+                            Some(ref mut r) => *r &= bitmap.as_ref(),
                         }
 
                         // Optimization: if empty, stop
                         if result.as_ref().map(|r| r.is_empty()).unwrap_or(false) {
-                            return Some(RoaringBitmap::new());
+                            return Some(Arc::new(RoaringBitmap::new()));
                         }
                     }
                 }
-                result
+                result.map(Arc::new)
             }
             Filter::Or(filters) => {
                 let mut result = RoaringBitmap::new();
                 for f in filters {
                     if let Some(bitmap) = self.filter(f) {
-                        result |= bitmap;
+                        result |= bitmap.as_ref();
                     }
                 }
-                Some(result)
+                Some(Arc::new(result))
             }
             Filter::Not(_filter) => {
                 // NOT is hard because we need the "universe" set (all valid IDs).

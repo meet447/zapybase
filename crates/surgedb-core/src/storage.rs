@@ -2,10 +2,14 @@
 //!
 //! Provides efficient storage and retrieval of vectors with ID mapping.
 
+use crate::bitmap_index::BitmapIndex;
 use crate::distance::DistanceMetric;
 use crate::error::{Error, Result};
+use crate::filter::Filter;
 use crate::sync::RwLock;
 use crate::types::{InternalId, VectorId};
+use roaring::RoaringBitmap;
+use std::sync::Arc;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -26,6 +30,11 @@ pub trait VectorStorageTrait {
 
     /// Get metadata for a vector
     fn get_metadata(&self, _internal_id: InternalId) -> Option<Value> {
+        None
+    }
+
+    /// Optional bitmap-accelerated filtering
+    fn filter_bitmap(&self, _filter: &Filter) -> Option<Arc<RoaringBitmap>> {
         None
     }
 
@@ -54,6 +63,9 @@ pub struct VectorStorage {
 
     /// Set of deleted internal IDs
     deleted: RwLock<std::collections::HashSet<InternalId>>,
+
+    /// Bitmap index for metadata filtering
+    bitmap_index: RwLock<BitmapIndex>,
 }
 
 impl VectorStorage {
@@ -66,6 +78,7 @@ impl VectorStorage {
             internal_to_id: RwLock::new(Vec::new()),
             metadata: RwLock::new(HashMap::new()),
             deleted: RwLock::new(std::collections::HashSet::new()),
+            bitmap_index: RwLock::new(BitmapIndex::new()),
         }
     }
 
@@ -78,6 +91,9 @@ impl VectorStorage {
 
         if let Some(internal_id) = id_to_internal.remove(id) {
             self.deleted.write().insert(internal_id);
+            if let Some(meta) = self.metadata.write().remove(&internal_id) {
+                self.bitmap_index.write().remove(internal_id, &meta);
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -136,6 +152,7 @@ impl VectorStorage {
         let mut internal_to_id = self.internal_to_id.write();
         let mut id_to_internal = self.id_to_internal.write();
         let mut metadata_store = self.metadata.write();
+        let mut bitmap_index = self.bitmap_index.write();
 
         // Double check duplicate under write lock to be safe?
         // Optimistic check above is fine if we assume single writer or accept race.
@@ -152,11 +169,15 @@ impl VectorStorage {
         // Update mappings
         if let Some(old_internal_id) = id_to_internal.insert(id.clone(), internal_id) {
             self.deleted.write().insert(old_internal_id);
+            if let Some(old_meta) = metadata_store.remove(&old_internal_id) {
+                bitmap_index.remove(old_internal_id, &old_meta);
+            }
         }
         internal_to_id.push(id);
 
         // Store metadata if present
         if let Some(meta) = metadata {
+            bitmap_index.index(internal_id, &meta);
             metadata_store.insert(internal_id, meta);
         }
 
@@ -187,6 +208,7 @@ impl VectorStorage {
         let mut internal_to_id = self.internal_to_id.write();
         let mut id_to_internal = self.id_to_internal.write();
         let mut metadata_store = self.metadata.write();
+        let mut bitmap_index = self.bitmap_index.write();
 
         let start_internal_id = internal_to_id.len();
         let mut result_ids = Vec::with_capacity(items.len());
@@ -201,11 +223,15 @@ impl VectorStorage {
             // Update mappings
             if let Some(old_internal_id) = id_to_internal.insert(id.clone(), internal_id) {
                 self.deleted.write().insert(old_internal_id);
+                if let Some(old_meta) = metadata_store.remove(&old_internal_id) {
+                    bitmap_index.remove(old_internal_id, &old_meta);
+                }
             }
             internal_to_id.push(id.clone());
 
             // Metadata
             if let Some(meta) = metadata {
+                bitmap_index.index(internal_id, meta);
                 metadata_store.insert(internal_id, meta.clone());
             }
         }
@@ -297,6 +323,7 @@ impl VectorStorage {
             guard: self.vectors.read(),
             metadata_guard: self.metadata.read(),
             deleted_guard: self.deleted.read(),
+            bitmap_guard: self.bitmap_index.read(),
             dimensions: self.dimensions,
         }
     }
@@ -308,6 +335,7 @@ pub struct VectorStorageView<'a> {
     guard: crate::sync::RwLockReadGuard<'a, Vec<f32>>,
     metadata_guard: crate::sync::RwLockReadGuard<'a, HashMap<InternalId, Value>>,
     deleted_guard: crate::sync::RwLockReadGuard<'a, std::collections::HashSet<InternalId>>,
+    bitmap_guard: crate::sync::RwLockReadGuard<'a, BitmapIndex>,
     dimensions: usize,
 }
 
@@ -345,6 +373,10 @@ impl<'a> VectorStorageTrait for VectorStorageView<'a> {
             return None;
         }
         self.metadata_guard.get(&internal_id).cloned()
+    }
+
+    fn filter_bitmap(&self, filter: &Filter) -> Option<Arc<RoaringBitmap>> {
+        self.bitmap_guard.filter(filter)
     }
 
     fn is_deleted(&self, internal_id: InternalId) -> bool {

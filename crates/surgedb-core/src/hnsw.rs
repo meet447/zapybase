@@ -14,9 +14,17 @@ use crate::sync::RwLock;
 use crate::types::InternalId;
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
 use rand::Rng;
+use roaring::RoaringBitmap;
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
+use std::sync::OnceLock;
+
+fn bitmap_filter_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("SURGEDB_DISABLE_BITMAP_FILTER").is_err())
+}
 
 /// HNSW configuration parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +172,7 @@ struct SearchContext<'a> {
     ef: usize,
     layer: usize,
     filter: Option<&'a Filter>,
+    filter_bitmap: Option<Arc<RoaringBitmap>>,
 }
 
 /// State of the HNSW index for serialization
@@ -279,6 +288,7 @@ impl HnswIndex {
                                 ef: self.config.ef_construction,
                                 layer,
                                 filter: None,
+                                filter_bitmap: None,
                             };
                             if let Ok(neighbors) =
                                 self.search_layer(ctx, current_ep, &nodes, storage)
@@ -451,6 +461,7 @@ impl HnswIndex {
                 ef: self.config.ef_construction,
                 layer,
                 filter: None,
+                filter_bitmap: None,
             };
             let neighbors = self.search_layer(ctx, current_ep, &nodes, storage)?;
 
@@ -585,7 +596,9 @@ impl HnswIndex {
         });
 
         // Check if entry point matches filter and is not deleted
-        let entry_matches = if let Some(f) = ctx.filter {
+        let entry_matches = if let Some(ref bitmap) = ctx.filter_bitmap {
+            bitmap.contains(entry.as_u32())
+        } else if let Some(f) = ctx.filter {
             storage
                 .get_metadata(entry)
                 .map(|m| f.matches(&m))
@@ -626,7 +639,9 @@ impl HnswIndex {
                                 });
 
                                 // Check filter and deleted status before adding to results
-                                let matches_filter = if let Some(f) = ctx.filter {
+                                let matches_filter = if let Some(ref bitmap) = ctx.filter_bitmap {
+                                    bitmap.contains(neighbor_id.as_u32())
+                                } else if let Some(f) = ctx.filter {
                                     storage
                                         .get_metadata(neighbor_id)
                                         .map(|m| f.matches(&m))
@@ -760,11 +775,17 @@ impl HnswIndex {
 
         // Search in layer 0 with ef_search
         let ef = self.config.ef_search.max(k);
+        let filter_bitmap = if bitmap_filter_enabled() {
+            filter.and_then(|f| storage.filter_bitmap(f))
+        } else {
+            None
+        };
         let ctx = SearchContext {
             query,
             ef,
             layer: 0,
             filter,
+            filter_bitmap,
         };
         let candidates = self.search_layer(ctx, current_ep, &nodes, storage)?;
 

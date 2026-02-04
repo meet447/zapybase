@@ -207,12 +207,16 @@ struct SearchRequest {
     #[schema(example = 10)]
     k: usize,
     filter: Option<Filter>,
+    /// When false, exclude metadata from response to reduce serialization overhead.
+    #[serde(default)]
+    include_metadata: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]
 struct SearchResult {
     id: String,
     distance: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Value>,
 }
 
@@ -999,6 +1003,7 @@ async fn delete_vector(
 #[derive(Serialize, ToSchema)]
 struct VectorListEntry {
     id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Value>,
 }
 
@@ -1072,6 +1077,11 @@ async fn search_vector(
     Json(payload): Json<SearchRequest>,
 ) -> Result<Json<Vec<SearchResult>>, (StatusCode, Json<ErrorResponse>)> {
     let handler_start = Instant::now();
+    let include_metadata = payload.include_metadata.unwrap_or(true);
+    let vector = payload.vector;
+    let k = payload.k;
+    let filter = payload.filter;
+
     let collection = state.db.get_collection(&name).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
@@ -1083,7 +1093,7 @@ async fn search_vector(
 
     let work_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
-        collection.search(&payload.vector, payload.k, payload.filter.as_ref())
+        collection.search(&vector, k, filter.as_ref())
     })
     .await
     .map_err(|e| {
@@ -1103,7 +1113,7 @@ async fn search_vector(
                 .map(|(id, distance, metadata)| SearchResult {
                     id: id.as_str().to_string(),
                     distance,
-                    metadata,
+                    metadata: if include_metadata { metadata } else { None },
                 })
                 .collect();
             let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
