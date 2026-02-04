@@ -1,8 +1,22 @@
 # SurgeDB Performance Benchmarks
 
-This folder contains end-to-end performance scripts for the HTTP server.
+This folder contains end-to-end performance scripts for the HTTP server and a perf harness.
 
-## Server HTTP Benchmark
+## Perf Harness
+
+Runs server + HTTP scenarios + core benches from a config file.
+
+```bash
+python3 scripts/perf/run_perf.py --config scripts/perf/perf.toml --output scripts/perf/perf_report.json
+```
+
+Skip core benches:
+
+```bash
+python3 scripts/perf/run_perf.py --skip-core
+```
+
+## HTTP Benchmark
 
 Start the server in another terminal:
 
@@ -19,16 +33,20 @@ python3 scripts/perf/http_bench.py --mode mixed --duration 60 --concurrency 32 -
 Search-only, with metadata filter:
 
 ```bash
-python3 scripts/perf/http_bench.py --mode search --use-filter --duration 60 --concurrency 32 --prefill 20000
+python3 scripts/perf/http_bench.py --mode search --use-filter --filter-type Exact --duration 60 --concurrency 32 --prefill 20000
 ```
 
-Quantized collection (SQ8):
+Search-only, exclude metadata from responses:
 
 ```bash
-python3 scripts/perf/http_bench.py --quantization SQ8 --mode search --duration 60 --concurrency 32 --prefill 20000
+python3 scripts/perf/http_bench.py --mode search --no-metadata --duration 60 --concurrency 32 --prefill 20000
 ```
 
-The script outputs a JSON summary with latency percentiles, QPS, and error counts.
+Save results to a JSON file:
+
+```bash
+python3 scripts/perf/http_bench.py --mode search --duration 60 --output /tmp/perf.json
+```
 
 ## Core Microbenchmarks (Criterion)
 

@@ -1,0 +1,38 @@
+[server]
+base_url = "http://localhost:3000"
+start_cmd = "cargo run --release -p surgedb-server"
+health_path = "/health"
+startup_timeout_secs = 60
+
+[http]
+collection = "perf_collection"
+dimensions = 384
+prefill = 20000
+duration = 60
+concurrency = 32
+
+[[http.scenarios]]
+name = "search"
+mode = "search"
+use_filter = false
+no_metadata = false
+
+[[http.scenarios]]
+name = "search_no_metadata"
+mode = "search"
+use_filter = false
+no_metadata = true
+
+[[http.scenarios]]
+name = "search_filter_exact"
+mode = "search"
+use_filter = true
+filter_type = "Exact"
+no_metadata = true
+
+[core]
+enabled = true
+bench_cmds = [
+  "cargo bench -p surgedb-core --bench vector_db",
+  "cargo bench -p surgedb-core --bench quantized_db"
+]

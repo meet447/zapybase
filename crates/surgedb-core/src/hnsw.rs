@@ -581,9 +581,10 @@ impl HnswIndex {
         nodes: &[HnswNode],
         storage: &impl VectorStorageTrait,
     ) -> Result<Vec<Candidate>> {
-        let mut visited = HashSet::new();
-        let mut candidates = BinaryHeap::new(); // min-heap
-        let mut results = BinaryHeap::new(); // max-heap
+        let visited_cap = ctx.ef.saturating_mul(4).max(64);
+        let mut visited = HashSet::with_capacity(visited_cap);
+        let mut candidates = BinaryHeap::with_capacity(ctx.ef + 1); // min-heap
+        let mut results = BinaryHeap::with_capacity(ctx.ef + 1); // max-heap
 
         let entry_dist = storage
             .distance(entry, ctx.query, self.distance_metric)

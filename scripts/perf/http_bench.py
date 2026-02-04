@@ -26,6 +26,14 @@ def parse_args():
     parser.add_argument("--search-ratio", type=float, default=0.7)
     parser.add_argument("--insert-ratio", type=float, default=0.2)
     parser.add_argument("--use-filter", action="store_true")
+    parser.add_argument(
+        "--filter-type",
+        default="Exact",
+        choices=["Exact", "OneOf", "Range"],
+        help="Filter type when --use-filter is set",
+    )
+    parser.add_argument("--no-metadata", action="store_true")
+    parser.add_argument("--output", default=None)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -103,7 +111,13 @@ def prefill(args):
             )
 
 
-def build_filter_payload():
+def build_filter_payload(filter_type):
+    if filter_type == "Exact":
+        return {"Exact": ["tag", "even"]}
+    if filter_type == "OneOf":
+        return {"OneOf": ["tag", ["even", "odd"]]}
+    if filter_type == "Range":
+        return {"Range": {"field": "score", "gt": 500.0}}
     return {"Exact": ["tag", "even"]}
 
 
@@ -127,6 +141,23 @@ def stats_from_latencies(latencies):
         "min_ms": latencies_ms[0],
         "max_ms": latencies_ms[-1],
     }
+
+
+def print_summary(summary):
+    search = summary.get("search") or {}
+    insert = summary.get("insert") or {}
+
+    def fmt(val):
+        if val is None:
+            return "-"
+        if isinstance(val, float):
+            return f"{val:.2f}"
+        return str(val)
+
+    print("\nSummary")
+    print("metric,search,insert")
+    for key in ["count", "qps", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "min_ms", "max_ms"]:
+        print(f\"{key},{fmt(search.get(key))},{fmt(insert.get(key))}\")
 
 
 def main():
@@ -162,8 +193,10 @@ def main():
                         "vector": random_vector(args.dimensions, rng),
                         "k": args.search_k,
                     }
+                    if args.no_metadata:
+                        payload["include_metadata"] = False
                     if args.use_filter:
-                        payload["filter"] = build_filter_payload()
+                        payload["filter"] = build_filter_payload(args.filter_type)
                     start = time.perf_counter()
                     status, _ = _post_json(
                         f"{args.base_url}/collections/{args.collection}/search",
@@ -220,6 +253,8 @@ def main():
         "quantization": args.quantization,
         "prefill": args.prefill,
         "concurrency": args.concurrency,
+        "include_metadata": not args.no_metadata,
+        "filter_type": args.filter_type if args.use_filter else None,
         "search": stats_from_latencies(latencies["search"]),
         "insert": stats_from_latencies(latencies["insert"]),
         "errors": errors,
@@ -230,7 +265,14 @@ def main():
     if summary["insert"]:
         summary["insert"]["qps"] = summary["insert"]["count"] / duration
 
-    print(json.dumps(summary, indent=2))
+    output = json.dumps(summary, indent=2)
+    print(output)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(output + "\n")
+
+    print_summary(summary)
 
 
 if __name__ == "__main__":
