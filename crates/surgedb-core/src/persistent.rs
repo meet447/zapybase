@@ -246,6 +246,41 @@ impl PersistentVectorDb {
         Ok(mapped)
     }
 
+    /// Search for the k nearest neighbors (without metadata)
+    pub fn search_ids(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&crate::filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32)>> {
+        if query.len() != self.config.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.config.dimensions,
+                got: query.len(),
+            });
+        }
+
+        let search_k = k * 2;
+        let results = self
+            .index
+            .search(query, search_k, &self.storage.view(), filter)?;
+
+        let mapped: Vec<(VectorId, f32)> = results
+            .into_iter()
+            .filter_map(|(internal_id, distance)| {
+                let ext_id = self.storage.get_external_id(internal_id)?;
+                let current_internal = self.storage.get_internal_id(&ext_id)?;
+                if current_internal != internal_id {
+                    return None;
+                }
+                Some((ext_id, distance))
+            })
+            .take(k)
+            .collect();
+
+        Ok(mapped)
+    }
+
     /// Create a checkpoint (snapshot + clear WAL)
     pub fn checkpoint(&mut self) -> Result<()> {
         let snapshot_id = SystemTime::now()

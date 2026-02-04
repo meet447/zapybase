@@ -115,6 +115,20 @@ impl Collection {
         }
     }
 
+    pub fn search_ids(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&crate::filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32)>> {
+        match self {
+            Collection::Standard(db) => db.read().search_ids(query, k, filter),
+            Collection::Quantized(db) => db.read().search_ids(query, k, filter),
+            #[cfg(feature = "persistence")]
+            Collection::Persistent(db) => db.read().search_ids(query, k, filter),
+        }
+    }
+
     pub fn list(&self, offset: usize, limit: usize) -> Vec<(VectorId, Option<Value>)> {
         match self {
             Collection::Standard(db) => db.read().list(offset, limit),

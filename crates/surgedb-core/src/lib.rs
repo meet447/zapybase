@@ -343,6 +343,41 @@ impl VectorDb {
         Ok(mapped)
     }
 
+    /// Search for the k nearest neighbors (without metadata)
+    pub fn search_ids(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32)>> {
+        if query.len() != self.config.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.config.dimensions,
+                got: query.len(),
+            });
+        }
+
+        let search_k = k * 2;
+        let results = self
+            .index
+            .search(query, search_k, &self.storage.view(), filter)?;
+
+        let mapped: Vec<(VectorId, f32)> = results
+            .into_iter()
+            .filter_map(|(internal_id, distance)| {
+                let ext_id = self.storage.get_external_id(internal_id)?;
+                let current_internal = self.storage.get_internal_id(&ext_id)?;
+                if current_internal != internal_id {
+                    return None;
+                }
+                Some((ext_id, distance))
+            })
+            .take(k)
+            .collect();
+
+        Ok(mapped)
+    }
+
     /// Get the number of vectors in the database
     pub fn len(&self) -> usize {
         self.storage.len()
@@ -626,6 +661,109 @@ impl QuantizedVectorDb {
                     let metadata = self.storage.get_metadata(internal_id);
                     (ext_id, distance, metadata)
                 })
+            })
+            .collect();
+
+        Ok(mapped)
+    }
+
+    /// Search for the k nearest neighbors (without metadata)
+    pub fn search_ids(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&filter::Filter>,
+    ) -> Result<Vec<(VectorId, f32)>> {
+        if query.len() != self.config.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.config.dimensions,
+                got: query.len(),
+            });
+        }
+
+        if self.storage.is_empty() {
+            return Err(Error::EmptyIndex);
+        }
+
+        let metric = self.config.distance_metric;
+        let multiplier =
+            if self.config.keep_originals && self.config.quantization != QuantizationType::None {
+                self.config.rerank_multiplier
+            } else {
+                1
+            };
+        let search_k = k * multiplier * 2;
+
+        let results: Vec<(types::InternalId, f32)> = if let Some(index) = &self.index {
+            index.search(query, search_k, &self.storage.view(), filter)?
+        } else {
+            let storage_view = self.storage.view();
+            let quantized_query = self.storage.quantize_query(query);
+
+            let mut candidates: Vec<(types::InternalId, f32)> = self
+                .storage
+                .all_internal_ids()
+                .into_iter()
+                .filter(|&id| {
+                    if let Some(f) = filter {
+                        if let Some(meta) = self.storage.get_metadata(id) {
+                            f.matches(&meta)
+                        } else {
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                })
+                .filter_map(|id| {
+                    storage_view
+                        .distance_quantized(query, &quantized_query, id, metric)
+                        .map(|dist| (id, dist))
+                })
+                .collect();
+            candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            candidates.into_iter().take(search_k).collect()
+        };
+
+        let valid_candidates: Vec<(types::InternalId, f32)> = results
+            .into_iter()
+            .filter(|(internal_id, _)| {
+                if let Some(ext_id) = self.storage.get_external_id(*internal_id) {
+                    if let Some(current) = self.storage.get_internal_id(&ext_id) {
+                        return current == *internal_id;
+                    }
+                }
+                false
+            })
+            .collect();
+
+        let final_results: Vec<(types::InternalId, f32)> =
+            if self.config.keep_originals && self.config.quantization != QuantizationType::None {
+                let k_rerank = k * self.config.rerank_multiplier;
+                let top_candidates: Vec<_> = valid_candidates.into_iter().take(k_rerank).collect();
+
+                let mut reranked: Vec<_> = top_candidates
+                    .into_iter()
+                    .filter_map(|(id, _)| {
+                        self.storage.get_original(id).map(|orig| {
+                            let dist = metric.distance(query, &orig);
+                            (id, dist)
+                        })
+                    })
+                    .collect();
+
+                reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                reranked.into_iter().take(k).collect()
+            } else {
+                valid_candidates.into_iter().take(k).collect()
+            };
+
+        let mapped: Vec<(VectorId, f32)> = final_results
+            .into_iter()
+            .filter_map(|(internal_id, distance)| {
+                self.storage
+                    .get_external_id(internal_id)
+                    .map(|ext_id| (ext_id, distance))
             })
             .collect();
 

@@ -1091,42 +1091,83 @@ async fn search_vector(
         )
     })?;
 
-    let work_start = Instant::now();
-    let result = tokio::task::spawn_blocking(move || {
-        collection.search(&vector, k, filter.as_ref())
-    })
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )
-    })?;
+    if include_metadata {
+        let work_start = Instant::now();
+        let result = tokio::task::spawn_blocking(move || {
+            collection.search(&vector, k, filter.as_ref())
+        })
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
 
-    match result {
-        Ok(results) => {
-            let map_start = Instant::now();
-            let response: Vec<SearchResult> = results
-                .into_iter()
-                .map(|(id, distance, metadata)| SearchResult {
-                    id: id.as_str().to_string(),
-                    distance,
-                    metadata: if include_metadata { metadata } else { None },
-                })
-                .collect();
-            let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
-            let map_ms = map_start.elapsed().as_secs_f64() * 1000.0;
-            let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
-            log_perf("search_vector", total_ms, work_ms, Some(map_ms), Some(response.len()));
-            Ok(Json(response))
+        match result {
+            Ok(results) => {
+                let map_start = Instant::now();
+                let response: Vec<SearchResult> = results
+                    .into_iter()
+                    .map(|(id, distance, metadata)| SearchResult {
+                        id: id.as_str().to_string(),
+                        distance,
+                        metadata,
+                    })
+                    .collect();
+                let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+                let map_ms = map_start.elapsed().as_secs_f64() * 1000.0;
+                let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+                log_perf("search_vector", total_ms, work_ms, Some(map_ms), Some(response.len()));
+                Ok(Json(response))
+            }
+            Err(e) => Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )),
         }
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+    } else {
+        let work_start = Instant::now();
+        let result = tokio::task::spawn_blocking(move || {
+            collection.search_ids(&vector, k, filter.as_ref())
+        })
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+        match result {
+            Ok(results) => {
+                let map_start = Instant::now();
+                let response: Vec<SearchResult> = results
+                    .into_iter()
+                    .map(|(id, distance)| SearchResult {
+                        id: id.as_str().to_string(),
+                        distance,
+                        metadata: None,
+                    })
+                    .collect();
+                let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
+                let map_ms = map_start.elapsed().as_secs_f64() * 1000.0;
+                let total_ms = handler_start.elapsed().as_secs_f64() * 1000.0;
+                log_perf("search_vector", total_ms, work_ms, Some(map_ms), Some(response.len()));
+                Ok(Json(response))
+            }
+            Err(e) => Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )),
+        }
     }
 }
